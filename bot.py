@@ -6,7 +6,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart, Command
 from dotenv import load_dotenv
 from aiogram.types import FSInputFile
-from telegram_connect import start_login, confirm_code, list_accounts
+from telegram_connect import start_login, confirm_code, list_accounts, delete_account_by_phone
 from dialog_report import build_report, build_reports_by_accounts
 from pathlib import Path
 import json
