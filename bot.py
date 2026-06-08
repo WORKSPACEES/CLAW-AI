@@ -195,6 +195,32 @@ async def admin_chat(message: types.Message):
     user_id = message.from_user.id
     lower_text = text.lower()
 
+    # 1. Отчёт именно в канал — должен стоять ВЫШЕ обычного отчёта
+    if (
+        "скинь отчет в канал" in lower_text
+        or "скинь отчёт в канал" in lower_text
+        or "отправь отчет в канал" in lower_text
+        or "отправь отчёт в канал" in lower_text
+        or "дай отчет в канал" in lower_text
+        or "дай отчёт в канал" in lower_text
+    ):
+        if not REPORT_CHAT_ID:
+            await message.answer("❌ REPORT_CHAT_ID не указан")
+            return
+
+        await message.answer("📊 Собираю отчёт и отправляю в канал...")
+
+        try:
+            report = build_report()
+            await bot.send_message(REPORT_CHAT_ID, report)
+            await message.answer("✅ Отчёт отправлен в канал")
+        except Exception as e:
+            print("DIALOG CHANNEL REPORT ERROR:", e)
+            await message.answer(f"❌ Ошибка отправки отчёта в канал: {e}")
+
+        return
+
+    # 2. Обычный отчёт в личку
     if (
         "скинь отчет" in lower_text
         or "скинь отчёт" in lower_text
@@ -391,18 +417,18 @@ async def admin_chat(message: types.Message):
 
     if intent == "send_report_to_channel":
         if not REPORT_CHAT_ID:
-          await message.answer("❌ REPORT_CHAT_ID не указан в .env")
-          return
+            await message.answer("❌ REPORT_CHAT_ID не указан в .env")
+            return
 
         await message.answer("📊 Собираю новый отчёт...")
 
         try:
-          report = build_report()
-          await bot.send_message(REPORT_CHAT_ID, report)
-          await message.answer("✅ Новый отчёт отправил в канал")
+            report = build_report()
+            await bot.send_message(REPORT_CHAT_ID, report)
+            await message.answer("✅ Новый отчёт отправил в канал")
         except Exception as e:
-          print("DIALOG CHANNEL REPORT ERROR:", e)
-          await message.answer(f"❌ Ошибка отчёта в канал: {e}")
+            print("DIALOG CHANNEL REPORT ERROR:", e)
+            await message.answer(f"❌ Ошибка отчёта в канал: {e}")
 
         return
 
