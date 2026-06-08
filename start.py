@@ -23,28 +23,33 @@ async def start_web_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
-    print(f"✅ Web server started on port {port}")
+    print(f"✅ WEB SERVER STARTED ON PORT {port}", flush=True)
 
 
-async def safe_run(name, coro):
+async def safe_run(name, func):
     while True:
         try:
-            print(f"🚀 Starting {name}")
-            await coro()
+            print(f"🚀 STARTING {name}", flush=True)
+            await func()
         except Exception as e:
-            print(f"❌ {name} crashed:", e)
-            print(f"🔁 Restarting {name} in 10 seconds...")
+            print(f"❌ {name} CRASHED: {e}", flush=True)
+            print(f"🔁 RESTARTING {name} IN 10 SEC", flush=True)
             await asyncio.sleep(10)
 
 
 async def main():
+    print("🔥 START.PY LAUNCHED", flush=True)
+
     await start_web_server()
 
-    await asyncio.gather(
-        safe_run("bot.py", bot_main),
-        safe_run("multworker.py", multworker_main),
-        safe_run("report_scheduler.py", report_scheduler_main),
-    )
+    asyncio.create_task(safe_run("BOT", bot_main))
+    asyncio.create_task(safe_run("MULTWORKER", multworker_main))
+    asyncio.create_task(safe_run("REPORT_SCHEDULER", report_scheduler_main))
+
+    print("✅ ALL TASKS CREATED", flush=True)
+
+    while True:
+        await asyncio.sleep(60)
 
 
 if __name__ == "__main__":
