@@ -22,7 +22,8 @@ def load_env_manual(path):
         os.environ[key.strip()] = value.strip().strip('"').strip("'")
 
 
-load_env_manual(ENV_PATH)
+if ENV_PATH.exists():
+    load_env_manual(ENV_PATH)
 
 API_ID = int(os.getenv("TELEGRAM_API_ID"))
 API_HASH = os.getenv("TELEGRAM_API_HASH")
