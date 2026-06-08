@@ -2,6 +2,7 @@ import asyncio
 import os
 import requests
 from aiogram import Bot, Dispatcher, types
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart, Command
 from dotenv import load_dotenv
 from aiogram.types import FSInputFile
@@ -101,8 +102,8 @@ async def send_report(message: types.Message):
         await message.answer("❌ REPORT_CHAT_ID не указан в .env")
         return
 
-    report = build_report()
-    await bot.send_message(REPORT_CHAT_ID, report)
+    report = build_report(detailed=False)
+    await bot.send_message(REPORT_CHAT_ID, report, reply_markup=report_keyboard())
     await message.answer("✅ Отчёт отправлен в канал")
 
 
@@ -185,6 +186,33 @@ def extract_report_chat_query(text):
 
     return None
 
+def report_keyboard():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📖 Развёрнутый отчёт",
+                    callback_data="full_report_current"
+                )
+            ]
+        ]
+    )
+
+@dp.callback_query(lambda c: c.data == "full_report_current")
+async def full_report_callback(callback: types.CallbackQuery):
+    await callback.answer("Собираю развёрнутый отчёт...")
+
+    try:
+        report = build_report(detailed=True)
+
+        if callback.message.chat.type == "private":
+            await callback.message.answer(report)
+        else:
+            await bot.send_message(callback.from_user.id, report)
+
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка развёрнутого отчёта: {e}")
+
 @dp.message()
 async def admin_chat(message: types.Message):
     text = message.text or ""
@@ -211,8 +239,8 @@ async def admin_chat(message: types.Message):
         await message.answer("📊 Собираю отчёт и отправляю в канал...")
 
         try:
-            report = build_report()
-            await bot.send_message(REPORT_CHAT_ID, report)
+            report = build_report(detailed=False)
+            await bot.send_message(REPORT_CHAT_ID, report, reply_markup=report_keyboard())
             await message.answer("✅ Отчёт отправлен в канал")
         except Exception as e:
             print("DIALOG CHANNEL REPORT ERROR:", e)
@@ -232,8 +260,8 @@ async def admin_chat(message: types.Message):
         await message.answer("📊 Собираю отчёт...")
 
         try:
-            report = build_report()
-            await message.answer(report)
+            report = build_report(detailed=False)
+            await message.answer(report, reply_markup=report_keyboard())
         except Exception as e:
             print("DIALOG REPORT ERROR:", e)
             await message.answer(f"❌ Ошибка отчёта: {e}")
@@ -423,8 +451,8 @@ async def admin_chat(message: types.Message):
         await message.answer("📊 Собираю новый отчёт...")
 
         try:
-            report = build_report()
-            await bot.send_message(REPORT_CHAT_ID, report)
+            report = build_report(detailed=False)
+            await bot.send_message(REPORT_CHAT_ID, report, reply_markup=report_keyboard())
             await message.answer("✅ Новый отчёт отправил в канал")
         except Exception as e:
             print("DIALOG CHANNEL REPORT ERROR:", e)
