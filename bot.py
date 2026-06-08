@@ -253,7 +253,36 @@ async def admin_chat(message: types.Message):
     user_id = message.from_user.id
     lower_text = text.lower()
 
-    # 1. Отчёт именно в канал — должен стоять ВЫШЕ обычного отчёта
+    # 0. Удаление Telegram-сессии по номеру
+    if (
+        "удали сессию" in lower_text
+        or "удалить сессию" in lower_text
+        or "удали эту сессию" in lower_text
+        or "удалить эту сессию" in lower_text
+        or "удали аккаунт" in lower_text
+        or "удалить аккаунт" in lower_text
+        or "отключи тг" in lower_text
+        or "отключить тг" in lower_text
+        or "удали тг" in lower_text
+        or "удалить тг" in lower_text
+    ):
+        phone_match = re.search(r"\+?\d[\d\s\-\(\)]{7,25}\d", text)
+
+        if not phone_match:
+            await message.answer(
+                "❌ Не вижу номер.\n\n"
+                "Напиши:\n"
+                "удали сессию +91 98751 68274"
+            )
+            return
+
+        phone = phone_match.group(0).strip()
+        result = delete_account_by_phone(user_id, phone)
+
+        await message.answer(result["message"])
+        return
+
+    # 1. Отчёт именно в канал
     if (
         "скинь отчет в канал" in lower_text
         or "скинь отчёт в канал" in lower_text
@@ -338,13 +367,15 @@ async def admin_chat(message: types.Message):
                 await message.answer(
                     report["text"],
                     reply_markup=report_keyboard(report["session_name"])
-            )
+                )
+
         except Exception as e:
             print("DIALOG REPORT ERROR:", e)
             await message.answer(f"❌ Ошибка отчёта: {e}")
 
         return
 
+    # 3. Состояние подключения Telegram
     if user_id in login_state:
         state = login_state[user_id]
 
@@ -401,40 +432,8 @@ async def admin_chat(message: types.Message):
 
             await message.answer(result["message"])
             return
-    
 
-        if (
-            "удали сессию" in lower_text
-            or "удалить сессию" in lower_text
-            or "удали аккаунт" in lower_text
-            or "удалить аккаунт" in lower_text
-            or "отключи тг" in lower_text
-            or "удалить тг" in lower_text
-        ):
-            phone_match = re.search(
-                r"\+?\d[\d\s\-\(\)]{7,25}\d",
-                text
-            )
-
-            if not phone_match:
-                await message.answer(
-                    "❌ Не вижу номер.\n\n"
-                    "Напиши:\n"
-                    "удали сессию +91 98751 68274"
-                )
-                return
-
-            phone = phone_match.group(0).strip()
-
-            result = delete_account_by_phone(
-                user_id,
-                phone
-            )
-
-            await message.answer(result["message"])
-            return
-    
-
+    # 4. Подключение Telegram
     if (
         "подключить тг" in lower_text
         or "подключи тг" in lower_text
@@ -459,6 +458,7 @@ async def admin_chat(message: types.Message):
         await message.answer("Окей. Какая реклама?")
         return
 
+    # 5. Список аккаунтов
     if (
         "мои тг" in lower_text
         or "список тг" in lower_text
@@ -544,6 +544,7 @@ async def admin_chat(message: types.Message):
             "📢 Отчёт в канал\n"
             "📱 Подключить Telegram\n"
             "📋 Список аккаунтов\n"
+            "🗑 Удалить сессию по номеру\n"
             "🔎 Анализ чата\n"
             "❓ Помощь"
         )
@@ -598,7 +599,9 @@ async def admin_chat(message: types.Message):
                     report["text"],
                     reply_markup=report_keyboard(report["session_name"])
                 )
+
             await message.answer("✅ Новый отчёт отправил в канал")
+
         except Exception as e:
             print("DIALOG CHANNEL REPORT ERROR:", e)
             await message.answer(f"❌ Ошибка отчёта в канал: {e}")
