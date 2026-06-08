@@ -18,12 +18,14 @@ def load_env_manual(path):
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
+
         key, value = line.split("=", 1)
         os.environ[key.strip()] = value.strip().strip('"').strip("'")
 
 
 if ENV_PATH.exists():
     load_env_manual(ENV_PATH)
+
 
 API_ID = int(os.getenv("TELEGRAM_API_ID"))
 API_HASH = os.getenv("TELEGRAM_API_HASH")
@@ -42,6 +44,7 @@ def load_accounts():
         .not_.is_("session_string", "null")
         .execute()
     )
+
     return result.data or []
 
 
@@ -89,11 +92,12 @@ async def save_message(
 
         print(
             f"✅ [{account.get('username')}] "
-            f"{direction} @{dialog_username}: {text[:80]}"
+            f"{direction} @{dialog_username}: {text[:80]}",
+            flush=True
         )
 
     except Exception as e:
-        print("❌ SUPABASE SAVE ERROR:", e)
+        print("❌ SUPABASE SAVE ERROR:", e, flush=True)
 
 
 async def start_account(account):
@@ -108,12 +112,13 @@ async def start_account(account):
 
     if not await client.is_user_authorized():
         print(f"❌ Аккаунт {username} не авторизован", flush=True)
+        await client.disconnect()
         return None
 
     print(f"✅ Аккаунт авторизован: {username}", flush=True)
 
     me = await client.get_me()
-    print(f"🟢 Аккаунт запущен из Supabase: @{me.username or me.id}")
+    print(f"🟢 Аккаунт запущен из Supabase: @{me.username or me.id}", flush=True)
 
     print("🔎 Проверяю последние диалоги аккаунта...", flush=True)
 
@@ -123,40 +128,43 @@ async def start_account(account):
             flush=True
         )
 
-@client.on(events.NewMessage())
-async def message_handler(event):
-    try:
-        print("📩 NEW MESSAGE EVENT", flush=True)
+    @client.on(events.NewMessage())
+    async def message_handler(event):
+        try:
+            print("📩 NEW MESSAGE EVENT", flush=True)
 
-        if event.is_private is not True:
-            print("⏭ Не личный чат, пропускаю", flush=True)
-            return
+            if event.is_private is not True:
+                print("⏭ Не личный чат, пропускаю", flush=True)
+                return
 
-        chat = await event.get_chat()
+            chat = await event.get_chat()
 
-        dialog_id = getattr(chat, "id", event.chat_id)
-        dialog_username = getattr(chat, "username", None) or str(dialog_id)
+            dialog_id = getattr(chat, "id", event.chat_id)
+            dialog_username = getattr(chat, "username", None) or str(dialog_id)
 
-        first_name = getattr(chat, "first_name", "") or ""
-        last_name = getattr(chat, "last_name", "") or ""
-        title = getattr(chat, "title", "") or ""
+            first_name = getattr(chat, "first_name", "") or ""
+            last_name = getattr(chat, "last_name", "") or ""
+            title = getattr(chat, "title", "") or ""
 
-        dialog_name = title or f"{first_name} {last_name}".strip() or dialog_username
+            dialog_name = title or f"{first_name} {last_name}".strip() or dialog_username
 
-        direction = "outgoing" if event.out else "incoming"
+            direction = "outgoing" if event.out else "incoming"
 
-        await save_message(
-            account=account,
-            dialog_id=dialog_id,
-            dialog_username=dialog_username,
-            dialog_name=dialog_name,
-            direction=direction,
-            text=event.raw_text,
-            message_date=event.message.date,
-        )
+            await save_message(
+                account=account,
+                dialog_id=dialog_id,
+                dialog_username=dialog_username,
+                dialog_name=dialog_name,
+                direction=direction,
+                text=event.raw_text,
+                message_date=event.message.date,
+            )
 
-    except Exception as e:
-        print(f"❌ MESSAGE HANDLER ERROR [{username}]: {e}", flush=True)
+        except Exception as e:
+            print(f"❌ MESSAGE HANDLER ERROR [{username}]: {e}", flush=True)
+
+    return client
+
 
 async def main():
     print("✅ multworker.py запущен", flush=True)
