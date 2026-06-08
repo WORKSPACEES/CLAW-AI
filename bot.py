@@ -400,6 +400,36 @@ async def admin_chat(message: types.Message):
 
             await message.answer(result["message"])
             return
+    
+
+        if (
+        "удали сессию" in lower_text
+        or "удалить сессию" in lower_text
+        or "удали аккаунт" in lower_text
+        or "удалить аккаунт" in lower_text
+        or "отключи тг" in lower_text
+        or "отключить тг" in lower_text
+        or "удали тг" in lower_text
+        or "удалить тг" in lower_text
+    ):
+        import re
+
+        phone_match = re.search(r"\+?\d[\d\s\-\(\)]{7,25}\d", text)
+
+        if not phone_match:
+            await message.answer(
+                "❌ Не вижу номер.\n\n"
+                "Напиши так:\n"
+                "удали сессию +91 98751 68274"
+            )
+            return
+
+        phone = phone_match.group(0).strip()
+
+        result = delete_account_by_phone(user_id, phone)
+        await message.answer(result["message"])
+        return
+    
 
     if (
         "подключить тг" in lower_text
