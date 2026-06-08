@@ -1,0 +1,8 @@
+telethon
+aiogram
+python-dotenv
+groq
+gspread
+google-auth
+supabase
+requests
