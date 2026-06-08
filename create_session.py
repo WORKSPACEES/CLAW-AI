@@ -18,7 +18,8 @@ def load_env_manual(path):
 
 
 async def main():
-    load_env_manual(ENV_PATH)
+    if ENV_PATH.exists():
+        load_env_manual(ENV_PATH)
 
     api_id = int(os.getenv("TELEGRAM_API_ID"))
     api_hash = os.getenv("TELEGRAM_API_HASH")
