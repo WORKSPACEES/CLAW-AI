@@ -102,8 +102,20 @@ async def send_report(message: types.Message):
         await message.answer("❌ REPORT_CHAT_ID не указан в .env")
         return
 
-    report = build_report(detailed=False)
-    await bot.send_message(REPORT_CHAT_ID, report, reply_markup=report_keyboard())
+    reports = build_reports_by_accounts(detailed=False)
+
+    if not reports:
+        await bot.send_message(REPORT_CHAT_ID, "За этот период новых диалогов нет.")
+        await message.answer("✅ Отчёт отправлен в канал")
+        return
+
+    for report in reports:
+        await bot.send_message(
+            REPORT_CHAT_ID,
+            report["text"],
+            reply_markup=report_keyboard(report["session_name"])
+        )
+
     await message.answer("✅ Отчёт отправлен в канал")
 
 
@@ -269,9 +281,22 @@ async def admin_chat(message: types.Message):
         await message.answer("📊 Собираю отчёт и отправляю в канал...")
 
         try:
-            report = build_report(detailed=False)
-            await bot.send_message(REPORT_CHAT_ID, report, reply_markup=report_keyboard())
+            reports = build_reports_by_accounts(detailed=False)
+
+            if not reports:
+                await bot.send_message(REPORT_CHAT_ID, "За этот период новых диалогов нет.")
+                await message.answer("✅ Отчёт отправлен в канал")
+                return
+
+            for report in reports:
+                await bot.send_message(
+                    REPORT_CHAT_ID,
+                    report["text"],
+                    reply_markup=report_keyboard(report["session_name"])
+            )
+
             await message.answer("✅ Отчёт отправлен в канал")
+
         except Exception as e:
             print("DIALOG CHANNEL REPORT ERROR:", e)
             await message.answer(f"❌ Ошибка отправки отчёта в канал: {e}")
