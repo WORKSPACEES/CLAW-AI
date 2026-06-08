@@ -115,6 +115,14 @@ async def start_account(account):
     me = await client.get_me()
     print(f"🟢 Аккаунт запущен из Supabase: @{me.username or me.id}")
 
+    print("🔎 Проверяю последние диалоги аккаунта...", flush=True)
+
+    async for dialog in client.iter_dialogs(limit=5):
+        print(
+            f"📌 Диалог: {dialog.name} | id={dialog.id} | unread={dialog.unread_count}",
+            flush=True
+        )
+
     @client.on(events.NewMessage(incoming=True))
     async def incoming_handler(event):
         try:
