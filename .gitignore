@@ -1,0 +1,8 @@
+.env
+venv/
+__pycache__/
+*.session
+*.session-journal
+*.db
+*.db-journal
+account_meta.json
