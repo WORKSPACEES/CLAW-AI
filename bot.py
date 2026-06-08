@@ -200,18 +200,22 @@ def report_keyboard():
 
 @dp.callback_query(lambda c: c.data == "full_report_current")
 async def full_report_callback(callback: types.CallbackQuery):
-    await callback.answer("Собираю развёрнутый отчёт...")
-
     try:
+        await callback.answer("📩 Отправляю развёрнутый отчёт в личку")
+
         report = build_report(detailed=True)
 
-        if callback.message.chat.type == "private":
-            await callback.message.answer(report)
-        else:
-            await bot.send_message(callback.from_user.id, report)
+        await bot.send_message(
+            chat_id=callback.from_user.id,
+            text=report
+        )
 
     except Exception as e:
-        await callback.message.answer(f"❌ Ошибка развёрнутого отчёта: {e}")
+        await callback.message.answer(
+            "❌ Не смог отправить в личку. "
+            "Сначала напиши мне любое сообщение в личку."
+        )
+        print("FULL REPORT CALLBACK ERROR:", e)
 
 @dp.message()
 async def admin_chat(message: types.Message):
