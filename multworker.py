@@ -100,6 +100,38 @@ async def save_message(
         print("❌ SUPABASE SAVE ERROR:", e, flush=True)
 
 
+async def check_deleted_chats(client, account):
+    while True:
+        try:
+            result = (
+                supabase.table("telegram_messages")
+                .select("dialog_id")
+                .eq("owner_id", str(account.get("owner_id") or "default_owner"))
+                .eq("account_session_name", account.get("session_name"))
+                .eq("chat_deleted", False)
+                .execute()
+            )
+
+            dialog_ids = list(set(row["dialog_id"] for row in result.data or [] if row.get("dialog_id")))
+
+            for dialog_id in dialog_ids:
+                try:
+                    await client.get_entity(int(dialog_id))
+                except Exception:
+                    supabase.table("telegram_messages").update({
+                        "chat_deleted": True
+                    }).eq("dialog_id", dialog_id).eq(
+                        "account_session_name", account.get("session_name")
+                    ).execute()
+
+                    print(f"🗑 Чат удалён/недоступен: {dialog_id}", flush=True)
+
+        except Exception as e:
+            print("❌ CHECK DELETED CHATS ERROR:", e, flush=True)
+
+        await asyncio.sleep(300)
+
+
 async def start_account(account):
     session_string = account.get("session_string")
     username = account.get("username") or account.get("phone") or account.get("session_name")
@@ -162,6 +194,8 @@ async def start_account(account):
 
         except Exception as e:
             print(f"❌ MESSAGE HANDLER ERROR [{username}]: {e}", flush=True)
+        
+    asyncio.create_task(check_deleted_chats(client, account))
 
     return client
 
