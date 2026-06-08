@@ -3,6 +3,7 @@ import asyncio
 from pathlib import Path
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from supabase_db import supabase
 
 from aiogram import Bot
 from dialog_report import build_report
@@ -88,6 +89,9 @@ async def send_shift_report(report_time):
         await bot.send_message(REPORT_CHAT_ID, report)
         print("✅ Отчёт отправлен в канал")
 
+        clear_report_cache(start_time, end_time)
+        print("🧹 Кэш сообщений за смену очищен из Supabase")
+
     except Exception as e:
         print("❌ Ошибка отправки отчёта:", e)
         await bot.send_message(REPORT_CHAT_ID, f"❌ Ошибка отчёта: {e}")
@@ -114,6 +118,17 @@ async def main():
 
         await asyncio.sleep(60)
 
+
+def clear_report_cache(start_time, end_time):
+    result = (
+        supabase.table("telegram_messages")
+        .delete()
+        .gte("message_date", start_time.isoformat())
+        .lt("message_date", end_time.isoformat())
+        .execute()
+    )
+
+    return result
 
 if __name__ == "__main__":
     asyncio.run(main())
