@@ -266,7 +266,7 @@ def format_dt(dt):
     return dt.astimezone(KYIV_TZ).strftime("%d.%m %H:%M")
 
 
-def build_report(start_time=None, end_time=None, shift_name=None):
+def build_report(start_time=None, end_time=None, shift_name=None, detailed=True):
     if start_time is None or end_time is None:
         period = get_current_shift_period()
         start_time = period["start_time"]
@@ -336,6 +336,19 @@ def build_report(start_time=None, end_time=None, shift_name=None):
 
     if not results:
         report.append("За этот период новых диалогов нет.")
+        return "\n".join(report)
+
+    if not detailed:
+        for i, r in enumerate(results, start=1):
+            username = r.get("username") or "unknown"
+
+            if is_deleted_chat(username):
+                username_line = f"ID {username}"
+            else:
+                username_line = f"@{username}"
+
+            report.append(f"{i}. {username_line}")
+
         return "\n".join(report)
 
     for i, r in enumerate(results, start=1):
