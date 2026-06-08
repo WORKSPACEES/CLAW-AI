@@ -235,6 +235,19 @@ async def admin_chat(message: types.Message):
         or "отправь отчёт в канал" in lower_text
         or "дай отчет в канал" in lower_text
         or "дай отчёт в канал" in lower_text
+        or "опубликуй отчет" in lower_text
+        or "опубликуй отчёт" in lower_text
+        or "выложи отчет" in lower_text
+        or "выложи отчёт" in lower_text
+        or "отправь статистику в канал" in lower_text
+        or "скинь статистику в канал" in lower_text
+        or "кинь статистику в канал" in lower_text
+        or "опубликуй статистику" in lower_text
+        or "выложи статистику" in lower_text
+        or "кинь сводку в канал" in lower_text
+        or "отчет в канал" in lower_text
+        or "в канал отчет" in lower_text
+        or "отчет в канал кинь" in lower_text
     ):
         if not REPORT_CHAT_ID:
             await message.answer("❌ REPORT_CHAT_ID не указан")
@@ -260,6 +273,18 @@ async def admin_chat(message: types.Message):
         or "дай отчёт" in lower_text
         or lower_text == "отчет"
         or lower_text == "отчёт"
+        or "статистика" in lower_text
+        or "дай статистику" in lower_text
+        or "покажи статистику" in lower_text
+        or "сводка" in lower_text
+        or "дай сводку" in lower_text
+        or "как дела по чатам" in lower_text
+        or "что по чатам" in lower_text
+        or "сколько написало" in lower_text
+        or "сколько осталось" in lower_text
+        or "анализ чатов" in lower_text
+        or "отчет по чатам" in lower_text
+        or "отчёт по чатам" in lower_text
     ):
         await message.answer("📊 Собираю отчёт...")
 
@@ -335,6 +360,14 @@ async def admin_chat(message: types.Message):
         or "подключим тг" in lower_text
         or "подключить телеграм" in lower_text
         or "подключи телеграм" in lower_text
+        or "добавить аккаунт" in lower_text
+        or "добавить тг" in lower_text
+        or "добавить телеграм" in lower_text
+        or "новый аккаунт" in lower_text
+        or "подключить аккаунт" in lower_text
+        or "подключить номер" in lower_text
+        or "добавить номер" in lower_text
+        or "авторизовать аккаунт" in lower_text
     ):
         login_state[user_id] = {
             "step": "waiting_ad_name",
@@ -416,6 +449,23 @@ async def admin_chat(message: types.Message):
                 "Не смог сделать AI-отчёт. Возможно, лимит Groq. Попробуй чуть позже."
             )
 
+        return
+
+    if (
+        "помощь" in lower_text
+        or "help" in lower_text
+        or "что ты умеешь" in lower_text
+        or "команды" in lower_text
+    ):
+        await message.answer(
+            "🤖 Команды:\n\n"
+            "📊 Отчёт\n"
+            "📢 Отчёт в канал\n"
+            "📱 Подключить Telegram\n"
+            "📋 Список аккаунтов\n"
+            "🔎 Анализ чата\n"
+            "❓ Помощь"
+        )
         return
 
     memory_command = detect_command_by_memory(text, user_id)
