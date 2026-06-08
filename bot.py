@@ -7,7 +7,7 @@ from aiogram.filters import CommandStart, Command
 from dotenv import load_dotenv
 from aiogram.types import FSInputFile
 from telegram_connect import start_login, confirm_code, list_accounts
-from dialog_report import build_report
+from dialog_report import build_report, build_reports_by_accounts
 from pathlib import Path
 import json
 
@@ -186,36 +186,49 @@ def extract_report_chat_query(text):
 
     return None
 
-def report_keyboard():
+def report_keyboard(session_name):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="📖 Развёрнутый отчёт",
-                    callback_data="full_report_current"
+                    callback_data=f"full_report_account:{session_name}"
                 )
             ]
         ]
     )
 
-@dp.callback_query(lambda c: c.data == "full_report_current")
+@dp.callback_query(lambda c: c.data.startswith("full_report_account:"))
 async def full_report_callback(callback: types.CallbackQuery):
     try:
+        session_name = callback.data.split(":", 1)[1]
+
         await callback.answer("📩 Отправляю развёрнутый отчёт в личку")
 
-        report = build_report(detailed=True)
+        reports = build_reports_by_accounts(detailed=True)
+
+        needed_report = None
+
+        for report in reports:
+            if report["session_name"] == session_name:
+                needed_report = report
+                break
+
+        if not needed_report:
+            await bot.send_message(
+                chat_id=callback.from_user.id,
+                text="За этот период по этому аккаунту нет данных."
+            )
+            return
 
         await bot.send_message(
             chat_id=callback.from_user.id,
-            text=report
+            text=needed_report["text"]
         )
 
     except Exception as e:
-        await callback.message.answer(
-            "❌ Не смог отправить в личку. "
-            "Сначала напиши мне любое сообщение в личку."
-        )
         print("FULL REPORT CALLBACK ERROR:", e)
+        await callback.answer("Ошибка развёрнутого отчёта", show_alert=True)
 
 @dp.message()
 async def admin_chat(message: types.Message):
@@ -289,8 +302,17 @@ async def admin_chat(message: types.Message):
         await message.answer("📊 Собираю отчёт...")
 
         try:
-            report = build_report(detailed=False)
-            await message.answer(report, reply_markup=report_keyboard())
+            reports = build_reports_by_accounts(detailed=False)
+
+            if not reports:
+                await message.answer("За этот период новых диалогов нет.")
+                return
+
+            for report in reports:
+                await message.answer(
+                    report["text"],
+                    reply_markup=report_keyboard(report["session_name"])
+            )
         except Exception as e:
             print("DIALOG REPORT ERROR:", e)
             await message.answer(f"❌ Ошибка отчёта: {e}")
@@ -505,8 +527,18 @@ async def admin_chat(message: types.Message):
         await message.answer("📊 Собираю новый отчёт...")
 
         try:
-            report = build_report(detailed=False)
-            await bot.send_message(REPORT_CHAT_ID, report, reply_markup=report_keyboard())
+            reports = build_reports_by_accounts(detailed=False)
+
+            if not reports:
+                await bot.send_message(REPORT_CHAT_ID, "За этот период новых диалогов нет.")
+                return
+
+            for report in reports:
+                await bot.send_message(
+                    REPORT_CHAT_ID,
+                    report["text"],
+                    reply_markup=report_keyboard(report["session_name"])
+            )
             await message.answer("✅ Новый отчёт отправил в канал")
         except Exception as e:
             print("DIALOG CHANNEL REPORT ERROR:", e)
