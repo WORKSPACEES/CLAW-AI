@@ -293,7 +293,7 @@ async def admin_chat(message: types.Message):
                     REPORT_CHAT_ID,
                     report["text"],
                     reply_markup=report_keyboard(report["session_name"])
-            )
+                )
 
             await message.answer("✅ Отчёт отправлен в канал")
 
@@ -563,7 +563,7 @@ async def admin_chat(message: types.Message):
                     REPORT_CHAT_ID,
                     report["text"],
                     reply_markup=report_keyboard(report["session_name"])
-            )
+                )
             await message.answer("✅ Новый отчёт отправил в канал")
         except Exception as e:
             print("DIALOG CHANNEL REPORT ERROR:", e)
