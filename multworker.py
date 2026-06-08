@@ -213,6 +213,8 @@ async def main():
 
     if not accounts:
         print("❌ В Supabase нет active аккаунтов с session_string", flush=True)
+        print("⏳ Жду 60 секунд и проверю снова...", flush=True)
+        await asyncio.sleep(60)
         return
 
     print(f"🔎 Найдено аккаунтов: {len(accounts)}", flush=True)
