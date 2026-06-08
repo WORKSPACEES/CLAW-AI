@@ -100,8 +100,17 @@ async def start_account(account):
     session_string = account.get("session_string")
     username = account.get("username") or account.get("phone") or account.get("session_name")
 
+    print(f"🔌 Подключаю аккаунт: {username}", flush=True)
+
     client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
-    await client.start()
+
+    await client.connect()
+
+    if not await client.is_user_authorized():
+        print(f"❌ Аккаунт {username} не авторизован", flush=True)
+        return None
+
+    print(f"✅ Аккаунт авторизован: {username}", flush=True)
 
     me = await client.get_me()
     print(f"🟢 Аккаунт запущен из Supabase: @{me.username or me.id}")
@@ -159,33 +168,45 @@ async def start_account(account):
 
 
 async def main():
-    print("✅ multworker.py запущен")
-    print("🔎 Загружаю Telegram-аккаунты из Supabase...")
+    print("✅ multworker.py запущен", flush=True)
+    print("🔎 Загружаю Telegram-аккаунты из Supabase...", flush=True)
 
     accounts = load_accounts()
 
     if not accounts:
-        print("❌ В Supabase нет active аккаунтов с session_string")
+        print("❌ В Supabase нет active аккаунтов с session_string", flush=True)
         return
 
-    print(f"🔎 Найдено аккаунтов: {len(accounts)}")
+    print(f"🔎 Найдено аккаунтов: {len(accounts)}", flush=True)
 
     clients = []
 
     for account in accounts:
+        username = account.get("username") or account.get("phone") or account.get("session_name")
+
         try:
+            print(f"🔌 Пробую запустить аккаунт: {username}", flush=True)
+
             client = await start_account(account)
-            clients.append(client)
+
+            if client:
+                clients.append(client)
+                print(f"✅ Аккаунт добавлен в прослушку: {username}", flush=True)
+            else:
+                print(f"⚠️ Аккаунт не вернул client: {username}", flush=True)
+
         except Exception as e:
-            print(f"❌ Не смог запустить аккаунт {account.get('username') or account.get('phone')}:", e)
+            print(f"❌ Не смог запустить аккаунт {username}: {e}", flush=True)
 
     if not clients:
-        print("❌ Ни один аккаунт не запустился")
+        print("❌ Ни один аккаунт не запустился", flush=True)
         return
 
-    print("✅ Все доступные аккаунты слушаются. Жду сообщения...")
+    print("✅ Все доступные аккаунты слушаются. Жду сообщения...", flush=True)
 
-    await asyncio.gather(*[client.run_until_disconnected() for client in clients])
+    await asyncio.gather(
+        *[client.run_until_disconnected() for client in clients]
+    )
 
 
 if __name__ == "__main__":
