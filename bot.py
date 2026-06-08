@@ -448,6 +448,12 @@ async def admin_chat(message: types.Message):
         or "подключить номер" in lower_text
         or "добавить номер" in lower_text
         or "авторизовать аккаунт" in lower_text
+        or "давай тг подключим" in lower_text
+        or "нужно тг подключить" in lower_text
+        or "подключим тг давай" in lower_text
+        or "хочу тг подключить" in lower_text
+        or "тг подключим давай сейчас" in lower_text
+        or "тг нужно подключить" in lower_text
     ):
         login_state[user_id] = {
             "step": "waiting_ad_name",
@@ -481,6 +487,9 @@ async def admin_chat(message: types.Message):
         or "аккаунты тг" in lower_text
         or "telegram аккаунты" in lower_text
         or "тг аккаунты" in lower_text
+        or "сколько тг есть" in lower_text
+        or "сколько есть тг" in lower_text
+        or "какие тг есть" in lower_text
     ):
         accounts = list_accounts(user_id)
 
