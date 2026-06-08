@@ -1,4 +1,5 @@
 import os
+import json
 from dotenv import load_dotenv
 from groq import Groq
 
@@ -7,6 +8,24 @@ load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 client = Groq(api_key=GROQ_API_KEY)
+
+
+def safe_json_loads(raw):
+    try:
+        return json.loads(raw)
+    except Exception:
+        pass
+
+    try:
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+
+        if start != -1 and end != 0:
+            return json.loads(raw[start:end])
+    except Exception:
+        pass
+
+    return None
 
 
 def analyze_messages_with_groq(messages):
@@ -30,18 +49,28 @@ def analyze_messages_with_groq(messages):
 {text_block}
 """
 
-    response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[
-            {"role": "system", "content": "Ты аналитик Telegram-переписок. Отвечай кратко и по делу на русском."},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.3,
-    )
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Ты аналитик Telegram-переписок. Отвечай кратко и по делу на русском.",
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            temperature=0.3,
+            max_tokens=700,
+        )
 
-    return response.choices[0].message.content
+        return response.choices[0].message.content
 
-import json
+    except Exception as e:
+        print("❌ GROQ ANALYZE MESSAGES ERROR:", e)
+        return "AI-анализ временно недоступен. Проверь лимит Groq или ключ API."
 
 
 def analyze_single_message_for_lead(text, chat_name="", sender_name=""):
@@ -70,26 +99,34 @@ needs_manual_reply: true/false
 Сообщение: {text}
 """
 
-    response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[
-            {
-                "role": "system",
-                "content": "Ты аналитик лидов. Отвечай строго валидным JSON без пояснений.",
-            },
-            {
-                "role": "user",
-                "content": prompt,
-            },
-        ],
-        temperature=0.2,
-    )
-
-    raw = response.choices[0].message.content.strip()
-
     try:
-        return json.loads(raw)
-    except Exception:
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Ты аналитик лидов. Отвечай строго валидным JSON без пояснений.",
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            temperature=0.2,
+            max_tokens=400,
+        )
+
+        raw = response.choices[0].message.content.strip()
+        parsed = safe_json_loads(raw)
+
+        if parsed:
+            return {
+                "lead": bool(parsed.get("lead", False)),
+                "topic": parsed.get("topic", "unknown"),
+                "priority": parsed.get("priority", "low"),
+                "needs_manual_reply": bool(parsed.get("needs_manual_reply", False)),
+            }
+
         return {
             "lead": False,
             "topic": "parse_error",
@@ -98,27 +135,172 @@ needs_manual_reply: true/false
             "raw": raw,
         }
 
-def chat_with_groq(text):
-    response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Ты Telegram AI-ассистент проекта ANALIZATOR. "
-                    "Общайся живо, по-русски, кратко и понятно. "
-                    "Если пользователь просто здоровается — поздоровайся. "
-                    "Если спрашивает обычный вопрос — ответь. "
-                    "Если просит отчёты, аналитику, лидов или расписание — скажи, что могу выполнить это через команды системы."
-                ),
-            },
-            {
-                "role": "user",
-                "content": text,
-            },
-        ],
-        temperature=0.4,
-        max_tokens=500,
-    )
+    except Exception as e:
+        print("❌ GROQ SINGLE MESSAGE ERROR:", e)
 
-    return response.choices[0].message.content
+        return {
+            "lead": False,
+            "topic": "groq_error",
+            "priority": "low",
+            "needs_manual_reply": False,
+        }
+
+
+def chat_with_groq(text):
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты Telegram AI-ассистент проекта ANALIZATOR. "
+                        "Общайся живо, по-русски, кратко и понятно. "
+                        "Если пользователь просто здоровается — поздоровайся. "
+                        "Если спрашивает обычный вопрос — ответь. "
+                        "Если просит отчёты, аналитику, лидов или расписание — скажи, что могу выполнить это через команды системы."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": text,
+                },
+            ],
+            temperature=0.4,
+            max_tokens=500,
+        )
+
+        return response.choices[0].message.content
+
+    except Exception as e:
+        print("❌ GROQ CHAT ERROR:", e)
+        return "Groq сейчас не ответил. Попробуй ещё раз через пару секунд."
+
+
+def analyze_dialog_with_groq(dialog_messages):
+    if not dialog_messages:
+        return {
+            "diagnosis": "Нет данных",
+            "detail": "Сообщений нет.",
+            "result": "Неизвестно",
+            "manager_action": "Проверить вручную.",
+        }
+
+    dialog_lines = []
+
+    for msg in dialog_messages[-50:]:
+        text = msg.get("text") or ""
+
+        if not text:
+            continue
+
+        direction = msg.get("direction")
+
+        if direction == "incoming":
+            role = "Клиент"
+        elif direction == "outgoing":
+            role = "Менеджер"
+        else:
+            role = "Неизвестно"
+
+        dialog_lines.append(f"{role}: {text}")
+
+    dialog_text = "\n".join(dialog_lines)
+
+    if not dialog_text.strip():
+        return {
+            "diagnosis": "Нет текста",
+            "detail": "В диалоге нет текстовых сообщений.",
+            "result": "Неизвестно",
+            "manager_action": "Проверить вручную.",
+        }
+
+    prompt = f"""
+Ты анализируешь один Telegram-диалог между клиентом и менеджером.
+
+Важно:
+- Не считай просто количество сообщений.
+- Пойми смысл переписки.
+- Определи, есть ли интерес, сомнение, отказ, ожидание ответа или хороший лид.
+- Если последнее сообщение клиента осталось без ответа — обязательно укажи это.
+- Если менеджер уже ответил и диалог выглядит нормально — напиши, что ситуация в работе.
+- Пиши кратко, но конкретно.
+- Не придумывай факты, которых нет в переписке.
+
+Верни строго JSON без markdown и без пояснений.
+
+Формат:
+{{
+    "diagnosis": "короткий диагноз ситуации",
+    "detail": "конкретно что произошло в диалоге",
+    "result": "итог диалога",
+    "manager_action": "что нужно сделать менеджеру"
+}}
+
+Примеры:
+{{
+    "diagnosis": "Клиент интересуется ценой",
+    "detail": "Клиент спросил стоимость и условия. Менеджер ответил, но клиент ещё не подтвердил решение.",
+    "result": "Есть интерес, но сделка не закрыта",
+    "manager_action": "Написать follow-up и предложить конкретное действие."
+}}
+
+{{
+    "diagnosis": "Клиент ждёт ответ",
+    "detail": "Последнее сообщение написал клиент, менеджер после этого не ответил.",
+    "result": "Нужен ответ",
+    "manager_action": "Ответить клиенту как можно быстрее."
+}}
+
+Переписка:
+{dialog_text}
+"""
+
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты опытный руководитель отдела продаж. "
+                        "Ты анализируешь Telegram-переписки для отчёта. "
+                        "Отвечай только валидным JSON."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            temperature=0.2,
+            max_tokens=700,
+        )
+
+        raw = response.choices[0].message.content.strip()
+        parsed = safe_json_loads(raw)
+
+        if parsed:
+            return {
+                "diagnosis": parsed.get("diagnosis", "Неизвестно"),
+                "detail": parsed.get("detail", "Нет деталей"),
+                "result": parsed.get("result", "Неизвестно"),
+                "manager_action": parsed.get("manager_action", "Проверить вручную"),
+            }
+
+        return {
+            "diagnosis": "Ошибка анализа",
+            "detail": raw[:500],
+            "result": "Не удалось определить",
+            "manager_action": "Проверить вручную",
+        }
+
+    except Exception as e:
+        print("❌ GROQ DIALOG ANALYSIS ERROR:", e)
+
+        return {
+            "diagnosis": "AI-анализ недоступен",
+            "detail": "Groq не смог обработать диалог.",
+            "result": "Неизвестно",
+            "manager_action": "Проверить вручную",
+        }
