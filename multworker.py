@@ -173,9 +173,9 @@ async def start_account(account):
 
             dialog_id = getattr(chat, "id", event.chat_id)
 
-           if str(dialog_id) in ("777000", "42777"):
-               print("⏭ Системное сообщение Telegram 777000, пропускаю", flush=True)
-               return 
+            if str(dialog_id) in ("777000", "42777"):
+                print(f"⏭ Системное сообщение Telegram {dialog_id}, пропускаю", flush=True)
+                return
 
             dialog_username = getattr(chat, "username", None) or str(dialog_id)
 
@@ -199,7 +199,7 @@ async def start_account(account):
 
         except Exception as e:
             print(f"❌ MESSAGE HANDLER ERROR [{username}]: {e}", flush=True)
-        
+
     asyncio.create_task(check_deleted_chats(client, account))
 
     return client
