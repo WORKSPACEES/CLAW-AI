@@ -97,3 +97,34 @@ def list_accounts(owner_user_id):
     )
 
     return result.data or []
+
+def delete_account_by_phone(owner_user_id, phone):
+    clean_phone = phone.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+
+    result = (
+        supabase.table("telegram_accounts")
+        .select("*")
+        .eq("owner_user_id", str(owner_user_id))
+        .eq("phone", clean_phone)
+        .execute()
+    )
+
+    accounts = result.data or []
+
+    if not accounts:
+        return {
+            "ok": False,
+            "message": f"❌ Не нашёл активную сессию по номеру: {phone}"
+        }
+
+    for acc in accounts:
+        supabase.table("telegram_accounts").update({
+            "status": "deleted",
+            "active": False,
+            "session_string": None,
+        }).eq("id", acc["id"]).execute()
+
+    return {
+        "ok": True,
+        "message": f"✅ Сессия по номеру {phone} удалена/отключена"
+    }
