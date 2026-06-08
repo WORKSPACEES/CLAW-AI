@@ -1,3 +1,61 @@
+from collections import defaultdict
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from supabase_db import supabase
+
+KYIV_TZ = ZoneInfo("Europe/Kyiv")
+
+
+def parse_dt(value):
+    if isinstance(value, datetime):
+        return value
+
+    if not value:
+        return None
+
+    value = str(value).replace("Z", "+00:00")
+
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None
+
+
+def load_messages(start_time, end_time):
+    start_iso = start_time.astimezone(KYIV_TZ).isoformat()
+    end_iso = end_time.astimezone(KYIV_TZ).isoformat()
+
+    result = (
+        supabase.table("telegram_messages")
+        .select("*")
+        .gte("message_date", start_iso)
+        .lt("message_date", end_iso)
+        .order("message_date", desc=False)
+        .execute()
+    )
+
+    return result.data or []
+
+
+def load_account_by_session(session_name):
+    if not session_name:
+        return {}
+
+    result = (
+        supabase.table("telegram_accounts")
+        .select("*")
+        .eq("session_name", session_name)
+        .limit(1)
+        .execute()
+    )
+
+    if result.data:
+        return result.data[0]
+
+    return {}
+
+
 def group_by_account(messages):
     accounts = defaultdict(list)
 
@@ -6,6 +64,83 @@ def group_by_account(messages):
         accounts[str(account_key)].append(msg)
 
     return accounts
+
+
+def group_by_dialog(messages):
+    dialogs = defaultdict(list)
+
+    for msg in messages:
+        dialog_key = (
+            msg.get("dialog_username")
+            or msg.get("dialog_id")
+            or msg.get("chat_id")
+            or "unknown"
+        )
+
+        dialogs[str(dialog_key)].append(msg)
+
+    return dialogs
+
+
+def is_deleted_dialog(dialog_messages):
+    for msg in dialog_messages:
+        if msg.get("chat_deleted") is True:
+            return True
+
+    return False
+
+
+def analyze_dialog(username, dialog_messages):
+    incoming = [
+        msg for msg in dialog_messages
+        if msg.get("direction") == "incoming"
+    ]
+
+    outgoing = [
+        msg for msg in dialog_messages
+        if msg.get("direction") == "outgoing"
+    ]
+
+    deleted = is_deleted_dialog(dialog_messages)
+
+    last_text = "-"
+    if dialog_messages:
+        last_text = dialog_messages[-1].get("text") or "-"
+
+    if deleted:
+        diagnosis = "Чат удалён"
+        detail = "Пользователь удалил чат или чат стал недоступен."
+        result = "Удалил чат"
+        manager_action = "Не требуется"
+    elif incoming and outgoing:
+        diagnosis = "Есть диалог"
+        detail = f"Входящих: {len(incoming)}, исходящих: {len(outgoing)}. Последнее: {last_text[:120]}"
+        result = "В работе"
+        manager_action = "Проверить переписку при необходимости"
+    elif incoming and not outgoing:
+        diagnosis = "Не ответили"
+        detail = f"Есть входящие без ответа. Последнее: {last_text[:120]}"
+        result = "Нужен ответ"
+        manager_action = "Ответить"
+    elif outgoing and not incoming:
+        diagnosis = "Только исходящие"
+        detail = f"Писали первыми. Последнее: {last_text[:120]}"
+        result = "Ждём ответа"
+        manager_action = "Ждать / сделать follow-up"
+    else:
+        diagnosis = "Нет данных"
+        detail = "Сообщений нет"
+        result = "Неизвестно"
+        manager_action = "Проверить вручную"
+
+    return {
+        "username": username,
+        "deleted": deleted,
+        "diagnosis": diagnosis,
+        "detail": detail,
+        "result": result,
+        "manager_action": manager_action,
+    }
 
 
 def build_account_report_text(account_session_name, messages, start_time, end_time, shift_name, detailed=False):
@@ -27,16 +162,8 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
         results.append(result)
 
     total_written = len(results)
-
-    deleted_dialogs = set()
-    for msg in messages:
-        if msg.get("chat_deleted") is True:
-            dialog_key = msg.get("dialog_username") or msg.get("dialog_id")
-            if dialog_key:
-                deleted_dialogs.add(str(dialog_key))
-
-    deleted_chats = len(deleted_dialogs)
-    remaining = total_written - deleted_chats
+    deleted_chats = sum(1 for r in results if r.get("deleted") is True)
+    remaining = max(0, total_written - deleted_chats)
 
     report_date = end_time.astimezone(KYIV_TZ).strftime("%d.%m")
 
@@ -62,9 +189,9 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
         return "\n".join(report)
 
     for i, r in enumerate(results, start=1):
-        username = r.get("username") or "unknown"
+        username = str(r.get("username") or "unknown")
 
-        if is_deleted_chat(username):
+        if r.get("deleted") is True or username.isdigit():
             username_line = f"ID {username}"
         else:
             username_line = f"@{username}"
@@ -77,6 +204,36 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
         report.append("")
 
     return "\n".join(report)
+
+
+def get_current_shift_period(now=None):
+    if now is None:
+        now = datetime.now(KYIV_TZ)
+
+    day_start = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    night_start = now.replace(hour=21, minute=0, second=0, microsecond=0)
+
+    if day_start <= now < night_start:
+        return {
+            "shift_name": "Дневная смена",
+            "start_time": day_start,
+            "end_time": night_start,
+        }
+
+    if now >= night_start:
+        return {
+            "shift_name": "Ночная смена",
+            "start_time": night_start,
+            "end_time": day_start + timedelta(days=1),
+        }
+
+    yesterday_night = night_start - timedelta(days=1)
+
+    return {
+        "shift_name": "Ночная смена",
+        "start_time": yesterday_night,
+        "end_time": day_start,
+    }
 
 
 def build_reports_by_accounts(start_time=None, end_time=None, shift_name=None, detailed=False):
