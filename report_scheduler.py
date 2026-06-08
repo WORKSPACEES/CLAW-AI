@@ -24,7 +24,8 @@ def load_env_manual(path):
         os.environ[key.strip()] = value.strip().strip('"').strip("'")
 
 
-load_env_manual(ENV_PATH)
+if ENV_PATH.exists():
+    load_env_manual(ENV_PATH)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 REPORT_CHAT_ID = os.getenv("REPORT_CHAT_ID")
