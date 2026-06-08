@@ -303,10 +303,15 @@ def build_report(start_time=None, end_time=None, shift_name=None):
 
     total_written = len(results)
 
-    deleted_chats = sum(
-        1 for r in results
-        if is_deleted_chat(r.get("username"))
-    )
+    deleted_dialogs = set()
+
+    for msg in messages:
+        if msg.get("chat_deleted") is True:
+            dialog_key = msg.get("dialog_username") or msg.get("dialog_id")
+            if dialog_key:
+                deleted_dialogs.add(str(dialog_key))
+
+    deleted_chats = len(deleted_dialogs)
 
     remaining = total_written - deleted_chats
 
