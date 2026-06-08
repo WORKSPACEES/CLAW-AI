@@ -172,6 +172,11 @@ async def start_account(account):
             chat = await event.get_chat()
 
             dialog_id = getattr(chat, "id", event.chat_id)
+
+           if str(dialog_id) in ("777000", "42777"):
+               print("⏭ Системное сообщение Telegram 777000, пропускаю", flush=True)
+               return 
+
             dialog_username = getattr(chat, "username", None) or str(dialog_id)
 
             first_name = getattr(chat, "first_name", "") or ""
