@@ -10,6 +10,7 @@ from telegram_connect import start_login, confirm_code, list_accounts, delete_ac
 from dialog_report import build_report, build_reports_by_accounts
 from pathlib import Path
 import json
+import re
 
 from database import get_today_stats, get_today_messages, get_messages_by_chat_query
 from ai import analyze_messages_with_groq, chat_with_groq
@@ -412,7 +413,6 @@ async def admin_chat(message: types.Message):
         or "удали тг" in lower_text
         or "удалить тг" in lower_text
     ):
-        import re
 
         phone_match = re.search(r"\+?\d[\d\s\-\(\)]{7,25}\d", text)
 
