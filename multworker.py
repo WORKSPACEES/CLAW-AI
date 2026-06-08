@@ -123,57 +123,40 @@ async def start_account(account):
             flush=True
         )
 
-    @client.on(events.NewMessage(incoming=True))
-    async def incoming_handler(event):
-        try:
-            sender = await event.get_sender()
-            dialog_id = sender.id if sender else event.chat_id
-            dialog_username = getattr(sender, "username", None) or str(dialog_id)
+@client.on(events.NewMessage())
+async def message_handler(event):
+    try:
+        print("📩 NEW MESSAGE EVENT", flush=True)
 
-            first_name = getattr(sender, "first_name", "") or ""
-            last_name = getattr(sender, "last_name", "") or ""
-            dialog_name = f"{first_name} {last_name}".strip() or dialog_username
+        if event.is_private is not True:
+            print("⏭ Не личный чат, пропускаю", flush=True)
+            return
 
-            await save_message(
-                account=account,
-                dialog_id=dialog_id,
-                dialog_username=dialog_username,
-                dialog_name=dialog_name,
-                direction="incoming",
-                text=event.raw_text,
-                message_date=event.message.date,
-            )
+        chat = await event.get_chat()
 
-        except Exception as e:
-            print(f"❌ INCOMING ERROR [{username}]:", e)
+        dialog_id = getattr(chat, "id", event.chat_id)
+        dialog_username = getattr(chat, "username", None) or str(dialog_id)
 
-    @client.on(events.NewMessage(outgoing=True))
-    async def outgoing_handler(event):
-        try:
-            chat = await event.get_chat()
-            dialog_id = getattr(chat, "id", event.chat_id)
-            dialog_username = getattr(chat, "username", None) or str(dialog_id)
+        first_name = getattr(chat, "first_name", "") or ""
+        last_name = getattr(chat, "last_name", "") or ""
+        title = getattr(chat, "title", "") or ""
 
-            first_name = getattr(chat, "first_name", "") or ""
-            last_name = getattr(chat, "last_name", "") or ""
-            title = getattr(chat, "title", "") or ""
-            dialog_name = title or f"{first_name} {last_name}".strip() or dialog_username
+        dialog_name = title or f"{first_name} {last_name}".strip() or dialog_username
 
-            await save_message(
-                account=account,
-                dialog_id=dialog_id,
-                dialog_username=dialog_username,
-                dialog_name=dialog_name,
-                direction="outgoing",
-                text=event.raw_text,
-                message_date=event.message.date,
-            )
+        direction = "outgoing" if event.out else "incoming"
 
-        except Exception as e:
-            print(f"❌ OUTGOING ERROR [{username}]:", e)
+        await save_message(
+            account=account,
+            dialog_id=dialog_id,
+            dialog_username=dialog_username,
+            dialog_name=dialog_name,
+            direction=direction,
+            text=event.raw_text,
+            message_date=event.message.date,
+        )
 
-    return client
-
+    except Exception as e:
+        print(f"❌ MESSAGE HANDLER ERROR [{username}]: {e}", flush=True)
 
 async def main():
     print("✅ multworker.py запущен", flush=True)
