@@ -38,7 +38,8 @@ def load_account_meta():
         return {}
 
 
-load_env_manual(ENV_PATH)
+if ENV_PATH.exists():
+    load_env_manual(ENV_PATH)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
