@@ -93,6 +93,7 @@ def list_accounts(owner_user_id):
         .select("*")
         .eq("owner_user_id", str(owner_user_id))
         .eq("status", "active")
+        .eq("active", True)
         .execute()
     )
 
@@ -108,34 +109,44 @@ def delete_account_by_phone(owner_user_id, phone):
     result = (
         supabase.table("telegram_accounts")
         .select("*")
-        .eq("owner_user_id", str(owner_user_id))
         .execute()
     )
 
     accounts = result.data or []
 
-    found = None
+    found_accounts = []
 
     for acc in accounts:
         db_phone = normalize_phone(acc.get("phone"))
 
         if db_phone == target_phone:
-            found = acc
-            break
+            found_accounts.append(acc)
 
-    if not found:
+    if not found_accounts:
         return {
             "ok": False,
             "message": f"❌ Не нашёл сессию по номеру: {phone}"
         }
 
-    supabase.table("telegram_accounts").update({
-        "status": "deleted",
-        "active": False,
-        "session_string": None,
-    }).eq("session_name", found["session_name"]).execute()
+    for acc in found_accounts:
+        session_name = acc.get("session_name")
+        acc_phone = acc.get("phone")
+
+        supabase.table("telegram_messages").delete().eq(
+            "account_session_name", session_name
+        ).execute()
+
+        supabase.table("telegram_leads").delete().eq(
+            "phone", acc_phone
+        ).execute()
+
+        supabase.table("telegram_accounts").update({
+            "status": "deleted",
+            "active": False,
+            "session_string": None,
+        }).eq("session_name", session_name).execute()
 
     return {
         "ok": True,
-        "message": f"✅ Сессия удалена: {found.get('first_name')} / @{found.get('username')}\nТелефон: {found.get('phone')}"
+        "message": f"✅ Сессия удалена по номеру: {phone}\n🧹 Все сообщения этого аккаунта очищены из отчётов."
     }
