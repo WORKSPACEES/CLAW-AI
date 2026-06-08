@@ -12,8 +12,12 @@ API_HASH = os.getenv("TELEGRAM_API_HASH")
 login_clients = {}
 
 
+def normalize_phone(phone):
+    return "".join(ch for ch in str(phone) if ch.isdigit())
+
+
 def make_session_name(owner_user_id, phone):
-    clean_phone = phone.replace("+", "").replace(" ", "")
+    clean_phone = normalize_phone(phone)
     return f"telegram_{owner_user_id}_{clean_phone}"
 
 
@@ -99,9 +103,6 @@ def list_accounts(owner_user_id):
 
     return result.data or []
 
-def normalize_phone(phone):
-    return "".join(ch for ch in str(phone) if ch.isdigit())
-
 
 def delete_account_by_phone(owner_user_id, phone):
     target_phone = normalize_phone(phone)
@@ -113,7 +114,6 @@ def delete_account_by_phone(owner_user_id, phone):
     )
 
     accounts = result.data or []
-
     found_accounts = []
 
     for acc in accounts:
@@ -128,16 +128,16 @@ def delete_account_by_phone(owner_user_id, phone):
             "message": f"❌ Не нашёл сессию по номеру: {phone}"
         }
 
+    deleted_count = 0
+
     for acc in found_accounts:
         session_name = acc.get("session_name")
-        acc_phone = acc.get("phone")
+
+        if not session_name:
+            continue
 
         supabase.table("telegram_messages").delete().eq(
             "account_session_name", session_name
-        ).execute()
-
-        supabase.table("telegram_leads").delete().eq(
-            "phone", acc_phone
         ).execute()
 
         supabase.table("telegram_accounts").update({
@@ -146,7 +146,13 @@ def delete_account_by_phone(owner_user_id, phone):
             "session_string": None,
         }).eq("session_name", session_name).execute()
 
+        deleted_count += 1
+
     return {
         "ok": True,
-        "message": f"✅ Сессия удалена по номеру: {phone}\n🧹 Все сообщения этого аккаунта очищены из отчётов."
+        "message": (
+            f"✅ Сессия удалена по номеру: {phone}\n"
+            f"🧹 Очищены сообщения из отчётов.\n"
+            f"Удалено аккаунтов: {deleted_count}"
+        )
     }
