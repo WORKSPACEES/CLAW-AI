@@ -1,6 +1,7 @@
 from collections import defaultdict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from ai import analyze_dialog_with_groq
 
 from supabase_db import supabase
 
@@ -103,43 +104,112 @@ def analyze_dialog(username, dialog_messages):
 
     deleted = is_deleted_dialog(dialog_messages)
 
-    last_text = "-"
-    if dialog_messages:
-        last_text = dialog_messages[-1].get("text") or "-"
+    all_texts = [
+        (msg.get("text") or "").lower()
+        for msg in dialog_messages
+        if msg.get("text")
+    ]
+
+    last_msg = dialog_messages[-1] if dialog_messages else {}
+    last_text = last_msg.get("text") or "-"
+    last_direction = last_msg.get("direction")
+
+    joined_text = " ".join(all_texts)
+
+    price_words = [
+        "цена", "сколько", "стоимость", "прайс", "$", "доллар",
+        "оплата", "заплатить", "скок"
+    ]
+
+    time_words = [
+        "когда", "во сколько", "сегодня", "завтра", "час",
+        "время", "сейчас"
+    ]
+
+    interest_words = [
+        "интересно", "хочу", "можно", "давай", "подходит",
+        "ок", "супер", "норм", "подойдет"
+    ]
+
+    reject_words = [
+        "дорого", "не интересно", "не подходит", "подумаю",
+        "потом", "нет", "не хочу"
+    ]
+
+    asked_price = any(word in joined_text for word in price_words)
+    asked_time = any(word in joined_text for word in time_words)
+    has_interest = any(word in joined_text for word in interest_words)
+    has_reject = any(word in joined_text for word in reject_words)
 
     if deleted:
-        diagnosis = "Чат удалён"
-        detail = "Пользователь удалил чат или чат стал недоступен."
-        result = "Удалил чат"
+        diagnosis = "Удалил чат"
+        detail = f"Чат стал недоступен. Последнее сообщение: {last_text[:120]}"
+        result = "Потерян"
         manager_action = "Не требуется"
-    elif incoming and outgoing:
-        diagnosis = "Есть диалог"
-        detail = f"Входящих: {len(incoming)}, исходящих: {len(outgoing)}. Последнее: {last_text[:120]}"
-        result = "В работе"
-        manager_action = "Проверить переписку при необходимости"
+
     elif incoming and not outgoing:
         diagnosis = "Не ответили"
-        detail = f"Есть входящие без ответа. Последнее: {last_text[:120]}"
+        detail = f"Пользователь написал, но ответа не было. Последнее: {last_text[:120]}"
         result = "Нужен ответ"
-        manager_action = "Ответить"
+        manager_action = "Срочно ответить"
+
     elif outgoing and not incoming:
         diagnosis = "Только исходящие"
-        detail = f"Писали первыми. Последнее: {last_text[:120]}"
+        detail = f"Менеджер написал первым, ответа пока нет. Последнее: {last_text[:120]}"
         result = "Ждём ответа"
-        manager_action = "Ждать / сделать follow-up"
+        manager_action = "Подождать / написать позже"
+
+    elif last_direction == "incoming":
+        diagnosis = "Клиент ждёт ответ"
+        detail = f"Последнее сообщение от клиента: {last_text[:120]}"
+        result = "Нужен ответ"
+        manager_action = "Ответить"
+
+    elif has_reject:
+        diagnosis = "Сомневается / отказ"
+        detail = f"В диалоге есть сомнение или отказ. Последнее: {last_text[:120]}"
+        result = "Под вопросом"
+        manager_action = "Дожать мягко / уточнить причину"
+
+    elif asked_price and asked_time:
+        diagnosis = "Горячий интерес"
+        detail = f"Спрашивал цену и время. Последнее: {last_text[:120]}"
+        result = "Хороший лид"
+        manager_action = "Довести до встречи"
+
+    elif asked_price:
+        diagnosis = "Интерес по цене"
+        detail = f"Пользователь спрашивал цену/условия. Последнее: {last_text[:120]}"
+        result = "Есть интерес"
+        manager_action = "Уточнить и закрыть на действие"
+
+    elif asked_time:
+        diagnosis = "Интерес по времени"
+        detail = f"Пользователь спрашивал по времени. Последнее: {last_text[:120]}"
+        result = "Есть интерес"
+        manager_action = "Предложить конкретное время"
+
+    elif has_interest:
+        diagnosis = "Заинтересован"
+        detail = f"В диалоге есть позитивный интерес. Последнее: {last_text[:120]}"
+        result = "Перспективный"
+        manager_action = "Продолжить диалог"
+
     else:
-        diagnosis = "Нет данных"
-        detail = "Сообщений нет"
-        result = "Неизвестно"
+        diagnosis = "Обычный диалог"
+        detail = f"Входящих: {len(incoming)}, исходящих: {len(outgoing)}. Последнее: {last_text[:120]}"
+        result = "В работе"
         manager_action = "Проверить вручную"
+
+    ai_result = analyze_dialog_with_groq(dialog_messages)
 
     return {
         "username": username,
         "deleted": deleted,
-        "diagnosis": diagnosis,
-        "detail": detail,
-        "result": result,
-        "manager_action": manager_action,
+        "diagnosis": ai_result.get("diagnosis", "Неизвестно"),
+        "detail": ai_result.get("detail", "Нет данных"),
+        "result": ai_result.get("result", "Неизвестно"),
+        "manager_action": ai_result.get("manager_action", "Проверить вручную"),
     }
 
 
