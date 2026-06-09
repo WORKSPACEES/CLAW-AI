@@ -375,21 +375,19 @@ async def admin_chat(message: types.Message):
 
         return
 
-        # 3. Состояние подключения Telegram
+            # 3. Состояние подключения Telegram
     if user_id in login_state:
         state = login_state[user_id]
 
         if state["step"] == "waiting_ad_name":
             state["ad_name"] = text.strip()
             state["step"] = "waiting_pc_name"
-
             await message.answer("Окей. Какой ПК / оператор?")
             return
 
         if state["step"] == "waiting_pc_name":
             state["pc_name"] = text.strip()
             state["step"] = "waiting_phone"
-
             await message.answer("Теперь пришли номер Telegram в формате +380...")
             return
 
@@ -407,6 +405,13 @@ async def admin_chat(message: types.Message):
                     pc_name=state.get("pc_name"),
                     operator_name=state.get("pc_name"),
                 )
+
+                if not result.get("ok"):
+                    if user_id in login_state:
+                        del login_state[user_id]
+
+                    await message.answer(result["message"])
+                    return
 
                 state["step"] = "waiting_code"
                 await message.answer(result["message"])
