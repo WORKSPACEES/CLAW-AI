@@ -391,26 +391,29 @@ async def admin_chat(message: types.Message):
             await message.answer("Теперь пришли номер Telegram в формате +380...")
             return
 
-        if state["step"] == "waiting_phone":
-            phone = text.strip()
-            state["phone"] = phone
+        try:
+            result = await start_login(
+                user_id,
+                phone,
+                ad_name=state.get("ad_name"),
+                pc_name=state.get("pc_name"),
+                operator_name=state.get("pc_name"),
+            )
 
-            await message.answer("📩 Отправляю код в Telegram...")
+            state["step"] = "waiting_code"
 
-            try:
-                await start_login(
-                    user_id,
-                    phone,
-                    ad_name=state.get("ad_name"),
-                    pc_name=state.get("pc_name"),
-                    operator_name=state.get("pc_name"),
-                )
+            await message.answer(result["message"])
 
-                state["step"] = "waiting_code"
-                await message.answer("✅ Код отправлен. Теперь пришли код из Telegram.")
+        except Exception as e:
+            print("❌ START LOGIN ERROR:", e)
 
-            except Exception as e:
-                await message.answer(f"❌ Ошибка отправки кода: {e}")
+            if user_id in login_state:
+                del login_state[user_id]
+
+            await message.answer(
+                f"❌ Ошибка отправки кода: {e}\n\n"
+                "Подключение сброшено. Напиши заново: подключить тг"
+            )
 
             return
 
