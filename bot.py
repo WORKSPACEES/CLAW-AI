@@ -6,7 +6,14 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart, Command
 from dotenv import load_dotenv
 from aiogram.types import FSInputFile
-from telegram_connect import start_login, confirm_code, list_accounts, delete_account_by_phone
+from telegram_connect import (
+    start_login,
+    confirm_code,
+    list_accounts,
+    delete_account_by_phone,
+    start_qr_login,
+    wait_qr_login,
+)
 from dialog_report import build_report, build_reports_by_accounts
 from pathlib import Path
 import json
@@ -196,7 +203,7 @@ def extract_report_chat_query(text):
             query = text[lower.find(marker) + len(marker):].strip()
             query = query.replace("@", "").strip()
             return query
-
+ffull_report_callback
     return None
 
 def report_keyboard(session_name):
@@ -206,6 +213,18 @@ def report_keyboard(session_name):
                 InlineKeyboardButton(
                     text="📖 Развёрнутый отчёт",
                     callback_data=f"full_report_account:{session_name}"
+                )
+            ]
+        ]
+    )
+
+def login_code_keyboard():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔳 Войти по QR",
+                    callback_data="login_by_qr"
                 )
             ]
         ]
@@ -242,6 +261,60 @@ async def full_report_callback(callback: types.CallbackQuery):
     except Exception as e:
         print("FULL REPORT CALLBACK ERROR:", e)
         await callback.answer("Ошибка развёрнутого отчёта", show_alert=True)
+
+@dp.callback_query(lambda c: c.data == "login_by_qr")
+async def login_by_qr_callback(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+
+    state = login_state.get(user_id)
+
+    if not state:
+        await callback.answer("Сначала напиши: подключить тг", show_alert=True)
+        return
+
+    await callback.answer("Генерирую QR...")
+
+    await bot.send_message(
+        chat_id=user_id,
+        text="🔳 Генерирую QR-код для входа..."
+    )
+
+    result = await start_qr_login(
+        user_id,
+        ad_name=state.get("ad_name"),
+        pc_name=state.get("pc_name"),
+        operator_name=state.get("pc_name"),
+    )
+
+    if not result.get("ok"):
+        await bot.send_message(
+            chat_id=user_id,
+            text=result["message"]
+        )
+        return
+
+    qr_path = result.get("qr_path")
+
+    await bot.send_photo(
+        chat_id=user_id,
+        photo=FSInputFile(qr_path),
+        caption=(
+            "🔳 Отсканируй этот QR через Telegram.\n\n"
+            "Telegram → Настройки → Устройства → Подключить устройство.\n\n"
+            "У тебя примерно 60–90 секунд."
+        )
+    )
+
+    wait_result = await wait_qr_login(user_id, timeout=90)
+
+    if wait_result.get("ok"):
+        if user_id in login_state:
+            del login_state[user_id]
+
+    await bot.send_message(
+        chat_id=user_id,
+        text=wait_result["message"]
+    )
 
 @dp.message()
 async def admin_chat(message: types.Message):
@@ -414,7 +487,12 @@ async def admin_chat(message: types.Message):
                     return
 
                 state["step"] = "waiting_code"
-                await message.answer(result["message"])
+
+                await message.answer(
+                    result["message"],
+                    reply_markup=login_code_keyboard()
+                )
+
                 return
 
             except Exception as e:
