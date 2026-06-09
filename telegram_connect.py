@@ -22,6 +22,16 @@ def make_session_name(owner_user_id, phone):
 
 
 async def start_login(owner_user_id, phone, ad_name=None, pc_name=None, operator_name=None):
+    if owner_user_id in login_clients:
+        old_client = login_clients[owner_user_id].get("client")
+
+        try:
+            await old_client.disconnect()
+        except Exception:
+            pass
+
+        del login_clients[owner_user_id]
+
     session_name = make_session_name(owner_user_id, phone)
 
     client = TelegramClient(StringSession(), API_ID, API_HASH)
@@ -37,6 +47,11 @@ async def start_login(owner_user_id, phone, ad_name=None, pc_name=None, operator
         "ad_name": ad_name,
         "pc_name": pc_name,
         "operator_name": operator_name,
+    }
+
+    return {
+        "ok": True,
+        "message": "✅ Код отправлен. Теперь пришли код из Telegram."
     }
 
 
@@ -77,7 +92,9 @@ async def confirm_code(owner_user_id, code):
         }, on_conflict="session_name").execute()
 
         await client.disconnect()
-        del login_clients[owner_user_id]
+
+        if owner_user_id in login_clients:
+            del login_clients[owner_user_id]
 
         return {
             "ok": True,
@@ -85,6 +102,14 @@ async def confirm_code(owner_user_id, code):
         }
 
     except Exception as e:
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+
+        if owner_user_id in login_clients:
+            del login_clients[owner_user_id]
+
         return {
             "ok": False,
             "message": f"❌ Ошибка входа: {e}"
