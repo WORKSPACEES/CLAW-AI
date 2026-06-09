@@ -428,9 +428,20 @@ async def admin_chat(message: types.Message):
                 }
 
                 save_account_meta(meta)
+
+                if user_id in login_state:
+                    del login_state[user_id]
+
+                await message.answer(result["message"])
+                return
+
+            if user_id in login_state:
                 del login_state[user_id]
 
-            await message.answer(result["message"])
+            await message.answer(
+                result["message"]
+                + "\n\nЯ сбросил подключение. Напиши заново: подключить тг"
+            )
             return
 
     # 4. Подключение Telegram
