@@ -203,7 +203,7 @@ def extract_report_chat_query(text):
             query = text[lower.find(marker) + len(marker):].strip()
             query = query.replace("@", "").strip()
             return query
-ffull_report_callback
+
     return None
 
 def report_keyboard(session_name):
