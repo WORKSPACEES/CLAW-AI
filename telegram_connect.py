@@ -155,7 +155,7 @@ async def wait_qr_login(owner_user_id, timeout=90):
 
         return {
             "ok": True,
-            "message": f"✅ Telegram подключен через QR и сохранён в Supabase: {me.first_name} / @{me.username}"
+            "message": f"✅ Telegram подключен: {me.first_name} / @{me.username}"
         }
 
     except SessionPasswordNeededError:
@@ -331,7 +331,7 @@ async def save_authorized_account(owner_user_id, client, data):
 
     return {
         "ok": True,
-        "message": f"✅ Telegram подключен и сохранён в Supabase: {me.first_name} / @{me.username}"
+        "message": f"✅ Telegram подключен: {me.first_name} / @{me.username}"
     }
 
 
