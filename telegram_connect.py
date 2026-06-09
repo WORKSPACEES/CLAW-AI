@@ -22,6 +22,14 @@ def make_session_name(owner_user_id, phone):
 
 
 async def start_login(owner_user_id, phone, ad_name=None, pc_name=None, operator_name=None):
+    phone = str(phone).strip().replace(" ", "")
+
+    if not phone.startswith("+"):
+        return {
+            "ok": False,
+            "message": "❌ Номер должен быть в международном формате, например: +380..."
+        }
+
     if owner_user_id in login_clients:
         old_client = login_clients[owner_user_id].get("client")
 
@@ -35,24 +43,67 @@ async def start_login(owner_user_id, phone, ad_name=None, pc_name=None, operator
     session_name = make_session_name(owner_user_id, phone)
 
     client = TelegramClient(StringSession(), API_ID, API_HASH)
-    await client.connect()
 
-    sent = await client.send_code_request(phone)
+    try:
+        await client.connect()
 
-    login_clients[owner_user_id] = {
-        "client": client,
-        "phone": phone,
-        "session_name": session_name,
-        "phone_code_hash": sent.phone_code_hash,
-        "ad_name": ad_name,
-        "pc_name": pc_name,
-        "operator_name": operator_name,
-    }
+        sent = await client.send_code_request(phone)
 
-    return {
-        "ok": True,
-        "message": "✅ Код отправлен. Теперь пришли код из Telegram."
-    }
+        code_type = type(sent.type).__name__ if sent and sent.type else "unknown"
+        next_type = type(sent.next_type).__name__ if getattr(sent, "next_type", None) else "none"
+
+        print("✅ TELEGRAM CODE REQUEST SENT", flush=True)
+        print("PHONE:", phone, flush=True)
+        print("CODE TYPE:", code_type, flush=True)
+        print("NEXT TYPE:", next_type, flush=True)
+        print("PHONE CODE HASH:", sent.phone_code_hash, flush=True)
+
+        login_clients[owner_user_id] = {
+            "client": client,
+            "phone": phone,
+            "session_name": session_name,
+            "phone_code_hash": sent.phone_code_hash,
+            "ad_name": ad_name,
+            "pc_name": pc_name,
+            "operator_name": operator_name,
+        }
+
+        if "App" in code_type:
+            where = (
+                "📲 Telegram отправил код в приложение Telegram.\n\n"
+                "Открой Telegram на этом номере и проверь официальный чат Telegram / 777000."
+            )
+        elif "Sms" in code_type:
+            where = "📩 Telegram отправил код по SMS."
+        elif "Call" in code_type:
+            where = "📞 Telegram отправит код через звонок."
+        else:
+            where = f"📩 Telegram принял запрос кода. Тип отправки: {code_type}"
+
+        return {
+            "ok": True,
+            "message": (
+                "✅ Запрос кода отправлен.\n\n"
+                f"{where}\n\n"
+                "Теперь пришли код сюда."
+            )
+        }
+
+    except Exception as e:
+        print("❌ SEND CODE REQUEST ERROR:", repr(e), flush=True)
+
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+
+        if owner_user_id in login_clients:
+            del login_clients[owner_user_id]
+
+        return {
+            "ok": False,
+            "message": f"❌ Telegram не отправил код.\n\nОшибка: {e}"
+        }
 
 
 async def confirm_code(owner_user_id, code):
