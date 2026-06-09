@@ -3,7 +3,7 @@ import asyncio
 from aiohttp import web
 
 from bot import main as bot_main
-from bot import bot
+from bot import bot, login_state
 from multworker import main as multworker_main
 from report_scheduler import main as report_scheduler_main
 from telegram_connect import confirm_2fa_by_token
@@ -214,6 +214,9 @@ async def twofa_api(request):
         owner_user_id, result = await confirm_2fa_by_token(token, password)
 
         if owner_user_id and result.get("ok"):
+            if owner_user_id in login_state:
+                del login_state[owner_user_id]
+
             await bot.send_message(
                 chat_id=owner_user_id,
                 text=result["message"]
