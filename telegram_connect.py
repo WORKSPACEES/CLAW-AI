@@ -8,6 +8,8 @@ from telethon.sessions import StringSession
 from supabase_db import supabase
 from pathlib import Path
 from telethon.errors import SessionPasswordNeededError
+import secrets
+from telethon.errors import SessionPasswordNeededError, PasswordHashInvalidError
 
 load_dotenv()
 
@@ -281,6 +283,51 @@ async def start_login(owner_user_id, phone, ad_name=None, pc_name=None, operator
         }
 
 
+async def save_authorized_account(owner_user_id, client, data):
+    me = await client.get_me()
+    session_string = client.session.save()
+
+    phone = getattr(me, "phone", None)
+
+    if phone:
+        phone = str(phone)
+        if not phone.startswith("+"):
+            phone = "+" + phone
+    else:
+        phone = data.get("phone")
+
+    session_name = data.get("session_name")
+
+    if not session_name:
+        clean_phone = normalize_phone(phone or me.id)
+        session_name = f"telegram_{owner_user_id}_{clean_phone}"
+
+    supabase.table("telegram_accounts").upsert({
+        "owner_user_id": str(owner_user_id),
+        "owner_id": str(os.getenv("REPORT_CHAT_ID", "default_owner")),
+        "session_name": session_name,
+        "session_string": session_string,
+        "phone": phone,
+        "username": me.username,
+        "first_name": me.first_name,
+        "ad_name": data.get("ad_name"),
+        "pc_name": data.get("pc_name"),
+        "operator_name": data.get("operator_name"),
+        "status": "active",
+        "active": True,
+    }, on_conflict="session_name").execute()
+
+    await client.disconnect()
+
+    if owner_user_id in login_clients:
+        del login_clients[owner_user_id]
+
+    return {
+        "ok": True,
+        "message": f"✅ Telegram подключен и сохранён в Supabase: {me.first_name} / @{me.username}"
+    }
+
+
 async def confirm_code(owner_user_id, code):
     data = login_clients.get(owner_user_id)
 
@@ -299,32 +346,19 @@ async def confirm_code(owner_user_id, code):
             phone_code_hash=data["phone_code_hash"],
         )
 
-        me = await client.get_me()
-        session_string = client.session.save()
+        return await save_authorized_account(owner_user_id, client, data)
 
-        supabase.table("telegram_accounts").upsert({
-            "owner_user_id": str(owner_user_id),
-            "owner_id": str(os.getenv("REPORT_CHAT_ID", "default_owner")),
-            "session_name": data["session_name"],
-            "session_string": session_string,
-            "phone": data["phone"],
-            "username": me.username,
-            "first_name": me.first_name,
-            "ad_name": data.get("ad_name"),
-            "pc_name": data.get("pc_name"),
-            "operator_name": data.get("operator_name"),
-            "status": "active",
-            "active": True,
-        }, on_conflict="session_name").execute()
+    except SessionPasswordNeededError:
+        token = secrets.token_urlsafe(32)
 
-        await client.disconnect()
-
-        if owner_user_id in login_clients:
-            del login_clients[owner_user_id]
+        data["needs_2fa"] = True
+        data["twofa_token"] = token
 
         return {
-            "ok": True,
-            "message": f"✅ Telegram подключен и сохранён в Supabase: {me.first_name} / @{me.username}"
+            "ok": False,
+            "needs_2fa": True,
+            "twofa_token": token,
+            "message": "🔐 Telegram просит пароль двухэтапной проверки."
         }
 
     except Exception as e:
@@ -341,6 +375,53 @@ async def confirm_code(owner_user_id, code):
             "message": f"❌ Ошибка входа: {e}"
         }
 
+async def confirm_2fa(owner_user_id, password):
+    data = login_clients.get(owner_user_id)
+
+    if not data:
+        return {
+            "ok": False,
+            "message": "❌ Сессия входа не найдена. Начни заново: подключить тг"
+        }
+
+    client = data.get("client")
+
+    if not client:
+        return {
+            "ok": False,
+            "message": "❌ Клиент Telegram не найден. Начни заново."
+        }
+
+    try:
+        await client.sign_in(password=password)
+
+        return await save_authorized_account(owner_user_id, client, data)
+
+    except PasswordHashInvalidError:
+        return {
+            "ok": False,
+            "wrong_password": True,
+            "message": "❌ Неверный пароль 2FA. Попробуй ещё раз."
+        }
+
+    except Exception as e:
+        print("❌ CONFIRM 2FA ERROR:", repr(e), flush=True)
+
+        return {
+            "ok": False,
+            "message": f"❌ Ошибка 2FA: {e}"
+        }
+
+
+async def confirm_2fa_by_token(token, password):
+    for owner_user_id, data in list(login_clients.items()):
+        if data.get("twofa_token") == token:
+            return owner_user_id, await confirm_2fa(owner_user_id, password)
+
+    return None, {
+        "ok": False,
+        "message": "❌ QR/2FA-сессия устарела. Начни вход заново."
+    }
 
 def list_accounts(owner_user_id):
     result = (
