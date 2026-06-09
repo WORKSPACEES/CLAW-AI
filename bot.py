@@ -555,63 +555,59 @@ async def admin_chat(message: types.Message):
                 )
                 return
 
-        if state["step"] == "waiting_code":
-            code = text.strip().replace(" ", "")
+                if state["step"] == "waiting_code":
+                    code = text.strip().replace(" ", "")
 
-            try:
-                result = await confirm_code(user_id, code)
+                    try:
+                        result = await confirm_code(user_id, code)
 
-                result = await confirm_code(user_id, code)
+                        if result.get("needs_2fa"):
+                            state["step"] = "waiting_2fa"
+                            state["twofa_token"] = result.get("twofa_token")
 
-                if result.get("needs_2fa"):
-                    state["step"] = "waiting_2fa"
-                    state["twofa_token"] = result.get("twofa_token")
+                            await message.answer(
+                                result["message"] + "\n\nНажми кнопку ниже и введи пароль 2FA.",
+                                reply_markup=twofa_keyboard(result.get("twofa_token"))
+                            )
+                            return
 
-                    await message.answer(
-                        result["message"] + "\n\nНажми кнопку ниже и введи пароль 2FA.",
-                        reply_markup=twofa_keyboard(result.get("twofa_token"))
-                )
-                return
+                        if result.get("ok"):
+                            meta = load_account_meta()
 
-            if result["ok"]:
+                            meta[str(user_id)] = {
+                                "ad_name": state.get("ad_name"),
+                                "pc_name": state.get("pc_name"),
+                                "phone": state.get("phone"),
+                            }
 
-                if result["ok"]:
-                    meta = load_account_meta()
+                            save_account_meta(meta)
 
-                    meta[str(user_id)] = {
-                        "ad_name": state.get("ad_name"),
-                        "pc_name": state.get("pc_name"),
-                        "phone": state.get("phone"),
-                    }
+                            if user_id in login_state:
+                                del login_state[user_id]
 
-                    save_account_meta(meta)
+                            await message.answer(result["message"])
+                            return
 
-                    if user_id in login_state:
-                        del login_state[user_id]
+                        if user_id in login_state:
+                            del login_state[user_id]
 
-                    await message.answer(result["message"])
-                    return
+                        await message.answer(
+                            result["message"]
+                            + "\n\nЯ сбросил подключение. Напиши заново: подключить тг"
+                        )
+                        return
 
-                if user_id in login_state:
-                    del login_state[user_id]
+                    except Exception as e:
+                        print("❌ CONFIRM CODE ERROR:", e)
 
-                await message.answer(
-                    result["message"]
-                    + "\n\nЯ сбросил подключение. Напиши заново: подключить тг"
-                )
-                return
+                        if user_id in login_state:
+                            del login_state[user_id]
 
-            except Exception as e:
-                print("❌ CONFIRM CODE ERROR:", e)
-
-                if user_id in login_state:
-                    del login_state[user_id]
-
-                await message.answer(
-                    f"❌ Ошибка подтверждения кода: {e}\n\n"
-                    "Подключение сброшено. Напиши заново: подключить тг"
-                )
-                return
+                        await message.answer(
+                            f"❌ Ошибка подтверждения кода: {e}\n\n"
+                            "Подключение сброшено. Напиши заново: подключить тг"
+                        )
+                        return
 
     # 4. Подключение Telegram
     if (
