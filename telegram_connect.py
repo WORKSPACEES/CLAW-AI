@@ -1,8 +1,13 @@
 import os
+import asyncio
+import uuid
+import qrcode
 from dotenv import load_dotenv
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from supabase_db import supabase
+from pathlib import Path
+from telethon.errors import SessionPasswordNeededError
 
 load_dotenv()
 
@@ -19,6 +24,176 @@ def normalize_phone(phone):
 def make_session_name(owner_user_id, phone):
     clean_phone = normalize_phone(phone)
     return f"telegram_{owner_user_id}_{clean_phone}"
+
+
+QR_DIR = Path("qr_codes")
+QR_DIR.mkdir(exist_ok=True)
+
+
+def make_session_name_from_me(owner_user_id, me):
+    phone = normalize_phone(getattr(me, "phone", None) or "")
+
+    if phone:
+        return f"telegram_{owner_user_id}_{phone}"
+
+    return f"telegram_{owner_user_id}_{me.id}"
+
+
+async def start_qr_login(owner_user_id, ad_name=None, pc_name=None, operator_name=None):
+    if owner_user_id in login_clients:
+        old_client = login_clients[owner_user_id].get("client")
+
+        try:
+            await old_client.disconnect()
+        except Exception:
+            pass
+
+        del login_clients[owner_user_id]
+
+    client = TelegramClient(StringSession(), API_ID, API_HASH)
+
+    try:
+        await client.connect()
+
+        qr_login = await client.qr_login()
+
+        qr_path = QR_DIR / f"telegram_qr_{owner_user_id}_{uuid.uuid4().hex}.png"
+
+        img = qrcode.make(qr_login.url)
+        img.save(qr_path)
+
+        login_clients[owner_user_id] = {
+            "client": client,
+            "qr_login": qr_login,
+            "login_type": "qr",
+            "qr_path": str(qr_path),
+            "ad_name": ad_name,
+            "pc_name": pc_name,
+            "operator_name": operator_name,
+        }
+
+        print("✅ TELEGRAM QR LOGIN CREATED", flush=True)
+        print("QR PATH:", qr_path, flush=True)
+
+        return {
+            "ok": True,
+            "qr_path": str(qr_path),
+            "message": "✅ QR-код создан. Отсканируй его через Telegram."
+        }
+
+    except Exception as e:
+        print("❌ QR LOGIN START ERROR:", repr(e), flush=True)
+
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+
+        if owner_user_id in login_clients:
+            del login_clients[owner_user_id]
+
+        return {
+            "ok": False,
+            "message": f"❌ Не смог создать QR-вход: {e}"
+        }
+
+
+async def wait_qr_login(owner_user_id, timeout=90):
+    data = login_clients.get(owner_user_id)
+
+    if not data:
+        return {
+            "ok": False,
+            "message": "❌ QR-вход не найден. Нажми кнопку QR ещё раз."
+        }
+
+    client = data.get("client")
+    qr_login = data.get("qr_login")
+
+    if not client or not qr_login:
+        return {
+            "ok": False,
+            "message": "❌ QR-сессия повреждена. Попробуй заново."
+        }
+
+    try:
+        await qr_login.wait(timeout=timeout)
+
+        me = await client.get_me()
+        session_string = client.session.save()
+
+        phone = getattr(me, "phone", None)
+
+        if phone:
+            phone = str(phone)
+            if not phone.startswith("+"):
+                phone = "+" + phone
+
+        session_name = make_session_name_from_me(owner_user_id, me)
+
+        supabase.table("telegram_accounts").upsert({
+            "owner_user_id": str(owner_user_id),
+            "owner_id": str(os.getenv("REPORT_CHAT_ID", "default_owner")),
+            "session_name": session_name,
+            "session_string": session_string,
+            "phone": phone,
+            "username": me.username,
+            "first_name": me.first_name,
+            "ad_name": data.get("ad_name"),
+            "pc_name": data.get("pc_name"),
+            "operator_name": data.get("operator_name"),
+            "status": "active",
+            "active": True,
+        }, on_conflict="session_name").execute()
+
+        await client.disconnect()
+
+        if owner_user_id in login_clients:
+            del login_clients[owner_user_id]
+
+        return {
+            "ok": True,
+            "message": f"✅ Telegram подключен через QR и сохранён в Supabase: {me.first_name} / @{me.username}"
+        }
+
+    except SessionPasswordNeededError:
+        return {
+            "ok": False,
+            "message": (
+                "⚠️ QR отсканирован, но на аккаунте включена двухэтапная защита.\n\n"
+                "Нужно отдельно добавить ввод пароля 2FA."
+            )
+        }
+
+    except asyncio.TimeoutError:
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+
+        if owner_user_id in login_clients:
+            del login_clients[owner_user_id]
+
+        return {
+            "ok": False,
+            "message": "⌛ QR-код устарел. Нажми кнопку QR ещё раз."
+        }
+
+    except Exception as e:
+        print("❌ QR LOGIN WAIT ERROR:", repr(e), flush=True)
+
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+
+        if owner_user_id in login_clients:
+            del login_clients[owner_user_id]
+
+        return {
+            "ok": False,
+            "message": f"❌ Ошибка QR-входа: {e}"
+        }
 
 
 async def start_login(owner_user_id, phone, ad_name=None, pc_name=None, operator_name=None):
