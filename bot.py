@@ -391,6 +391,12 @@ async def admin_chat(message: types.Message):
             await message.answer("Теперь пришли номер Telegram в формате +380...")
             return
 
+        if state["step"] == "waiting_phone":
+            phone = text.strip()
+            state["phone"] = phone
+
+            await message.answer("📩 Отправляю код в Telegram...")
+
         try:
             result = await start_login(
                 user_id,
