@@ -158,7 +158,7 @@ async def wait_qr_login(owner_user_id, timeout=90):
             "message": f"✅ Telegram подключен через QR и сохранён в Supabase: {me.first_name} / @{me.username}"
         }
 
-     except SessionPasswordNeededError:
+    except SessionPasswordNeededError:
         token = secrets.token_urlsafe(32)
 
         data["needs_2fa"] = True
