@@ -232,10 +232,11 @@ def login_code_keyboard():
         ]
     )
 
-WEBAPP_BASE_URL = os.getenv("WEBAPP_BASE_URL")
+WEBAPP_BASE_URL = (os.getenv("WEBAPP_BASE_URL") or "").rstrip("/")
+
 
 def twofa_keyboard(token):
-    if not WEBAPP_BASE_URL:
+    if not WEBAPP_BASE_URL or not token:
         return None
 
     return InlineKeyboardMarkup(
@@ -328,14 +329,32 @@ async def login_by_qr_callback(callback: types.CallbackQuery):
 
     wait_result = await wait_qr_login(user_id, timeout=90)
 
+    if wait_result.get("needs_2fa"):
+        state["step"] = "waiting_2fa"
+        state["twofa_token"] = wait_result.get("twofa_token")
+
+        await bot.send_message(
+            chat_id=user_id,
+            text=wait_result["message"] + "\n\nНажми кнопку ниже и введи пароль 2FA.",
+            reply_markup=twofa_keyboard(wait_result.get("twofa_token"))
+        )
+        return
+
     if wait_result.get("ok"):
         if user_id in login_state:
             del login_state[user_id]
+
+        await bot.send_message(
+            chat_id=user_id,
+            text=wait_result["message"]
+        )
+        return
 
     await bot.send_message(
         chat_id=user_id,
         text=wait_result["message"]
     )
+    return
 
 @dp.message()
 async def admin_chat(message: types.Message):
@@ -469,23 +488,24 @@ async def admin_chat(message: types.Message):
 
         return
 
-            # 3. Состояние подключения Telegram
+        # 3. Состояние подключения Telegram
     if user_id in login_state:
         state = login_state[user_id]
+        step = state.get("step")
 
-        if state["step"] == "waiting_ad_name":
+        if step == "waiting_ad_name":
             state["ad_name"] = text.strip()
             state["step"] = "waiting_pc_name"
             await message.answer("Окей. Какой ПК / оператор?")
             return
 
-        if state["step"] == "waiting_pc_name":
+        if step == "waiting_pc_name":
             state["pc_name"] = text.strip()
             state["step"] = "waiting_phone"
             await message.answer("Теперь пришли номер Telegram в формате +380...")
             return
 
-        if state["step"] == "waiting_phone":
+        if step == "waiting_phone":
             phone = text.strip()
             state["phone"] = phone
 
@@ -509,38 +529,10 @@ async def admin_chat(message: types.Message):
 
                 state["step"] = "waiting_code"
 
-                if state["step"] == "waiting_2fa":
-                    password = text.strip()
-
-                    await message.answer("🔐 Проверяю пароль 2FA...")
-
-                    result = await confirm_2fa(user_id, password)
-
-                    if result.get("ok"):
-                        if user_id in login_state:
-                            del login_state[user_id]
-
-                        await message.answer(result["message"])
-                        return
-
-                    if result.get("wrong_password"):
-                        await message.answer(result["message"])
-                        return
-
-                    if user_id in login_state:
-                        del login_state[user_id]
-
-                    await message.answer(
-                        result["message"]
-                        + "\n\nЯ сбросил подключение. Напиши заново: подключить тг"
-                    )
-                    return
-
                 await message.answer(
                     result["message"],
                     reply_markup=login_code_keyboard()
                 )
-
                 return
 
             except Exception as e:
@@ -555,59 +547,95 @@ async def admin_chat(message: types.Message):
                 )
                 return
 
-                if state["step"] == "waiting_code":
-                    code = text.strip().replace(" ", "")
+        if step == "waiting_code":
+            code = text.strip().replace(" ", "")
 
-                    try:
-                        result = await confirm_code(user_id, code)
+            try:
+                result = await confirm_code(user_id, code)
 
-                        if result.get("needs_2fa"):
-                            state["step"] = "waiting_2fa"
-                            state["twofa_token"] = result.get("twofa_token")
+                if result.get("needs_2fa"):
+                    state["step"] = "waiting_2fa"
+                    state["twofa_token"] = result.get("twofa_token")
 
-                            await message.answer(
-                                result["message"] + "\n\nНажми кнопку ниже и введи пароль 2FA.",
-                                reply_markup=twofa_keyboard(result.get("twofa_token"))
-                            )
-                            return
+                    await message.answer(
+                        result["message"] + "\n\nНажми кнопку ниже и введи пароль 2FA.",
+                        reply_markup=twofa_keyboard(result.get("twofa_token"))
+                    )
+                    return
 
-                        if result.get("ok"):
-                            meta = load_account_meta()
+                if result.get("ok"):
+                    meta = load_account_meta()
 
-                            meta[str(user_id)] = {
-                                "ad_name": state.get("ad_name"),
-                                "pc_name": state.get("pc_name"),
-                                "phone": state.get("phone"),
-                            }
+                    meta[str(user_id)] = {
+                        "ad_name": state.get("ad_name"),
+                        "pc_name": state.get("pc_name"),
+                        "phone": state.get("phone"),
+                    }
 
-                            save_account_meta(meta)
+                    save_account_meta(meta)
 
-                            if user_id in login_state:
-                                del login_state[user_id]
+                    if user_id in login_state:
+                        del login_state[user_id]
 
-                            await message.answer(result["message"])
-                            return
+                    await message.answer(result["message"])
+                    return
 
-                        if user_id in login_state:
-                            del login_state[user_id]
+                if user_id in login_state:
+                    del login_state[user_id]
 
-                        await message.answer(
-                            result["message"]
-                            + "\n\nЯ сбросил подключение. Напиши заново: подключить тг"
-                        )
-                        return
+                await message.answer(
+                    result["message"]
+                    + "\n\nЯ сбросил подключение. Напиши заново: подключить тг"
+                )
+                return
 
-                    except Exception as e:
-                        print("❌ CONFIRM CODE ERROR:", e)
+            except Exception as e:
+                print("❌ CONFIRM CODE ERROR:", e)
 
-                        if user_id in login_state:
-                            del login_state[user_id]
+                if user_id in login_state:
+                    del login_state[user_id]
 
-                        await message.answer(
-                            f"❌ Ошибка подтверждения кода: {e}\n\n"
-                            "Подключение сброшено. Напиши заново: подключить тг"
-                        )
-                        return
+                await message.answer(
+                    f"❌ Ошибка подтверждения кода: {e}\n\n"
+                    "Подключение сброшено. Напиши заново: подключить тг"
+                )
+                return
+
+        if step == "waiting_2fa":
+            password = text.strip()
+
+            await message.answer("🔐 Проверяю пароль 2FA...")
+
+            result = await confirm_2fa(user_id, password)
+
+            if result.get("ok"):
+                if user_id in login_state:
+                    del login_state[user_id]
+
+                await message.answer(result["message"])
+                return
+
+            if result.get("wrong_password"):
+                await message.answer(result["message"])
+                return
+
+            if user_id in login_state:
+                del login_state[user_id]
+
+            await message.answer(
+                result["message"]
+                + "\n\nЯ сбросил подключение. Напиши заново: подключить тг"
+            )
+            return
+
+        if user_id in login_state:
+            del login_state[user_id]
+
+        await message.answer(
+            "❌ Неизвестный шаг подключения. Я сбросил вход.\n\n"
+            "Напиши заново: подключить тг"
+        )
+        return
 
     # 4. Подключение Telegram
     if (
