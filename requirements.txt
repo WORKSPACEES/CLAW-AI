@@ -7,3 +7,4 @@ google-auth
 supabase
 requests
 aiohttp
+qrcode[pil]
