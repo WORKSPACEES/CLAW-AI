@@ -158,12 +158,19 @@ async def wait_qr_login(owner_user_id, timeout=90):
             "message": f"✅ Telegram подключен через QR и сохранён в Supabase: {me.first_name} / @{me.username}"
         }
 
-    except SessionPasswordNeededError:
+     except SessionPasswordNeededError:
+        token = secrets.token_urlsafe(32)
+
+        data["needs_2fa"] = True
+        data["twofa_token"] = token
+
         return {
             "ok": False,
+            "needs_2fa": True,
+            "twofa_token": token,
             "message": (
                 "⚠️ QR отсканирован, но на аккаунте включена двухэтапная защита.\n\n"
-                "Нужно отдельно добавить ввод пароля 2FA."
+                "Нужно ввести пароль 2FA."
             )
         }
 
