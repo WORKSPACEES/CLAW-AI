@@ -376,26 +376,11 @@ async def admin_chat(message: types.Message):
         return
 
     # 3. Состояние подключения Telegram
-    if user_id in login_state:
-        state = login_state[user_id]
+    if state["step"] == "waiting_phone":
+        phone = text.strip()
+        state["phone"] = phone
 
-        if state["step"] == "waiting_ad_name":
-            state["ad_name"] = text.strip()
-            state["step"] = "waiting_pc_name"
-            await message.answer("Окей. Какой ПК / оператор?")
-            return
-
-        if state["step"] == "waiting_pc_name":
-            state["pc_name"] = text.strip()
-            state["step"] = "waiting_phone"
-            await message.answer("Теперь пришли номер Telegram в формате +380...")
-            return
-
-        if state["step"] == "waiting_phone":
-            phone = text.strip()
-            state["phone"] = phone
-
-            await message.answer("📩 Отправляю код в Telegram...")
+        await message.answer("📩 Отправляю код в Telegram...")
 
         try:
             result = await start_login(
@@ -407,8 +392,8 @@ async def admin_chat(message: types.Message):
             )
 
             state["step"] = "waiting_code"
-
             await message.answer(result["message"])
+            return
 
         except Exception as e:
             print("❌ START LOGIN ERROR:", e)
@@ -420,38 +405,35 @@ async def admin_chat(message: types.Message):
                 f"❌ Ошибка отправки кода: {e}\n\n"
                 "Подключение сброшено. Напиши заново: подключить тг"
             )
-
             return
 
-        if state["step"] == "waiting_code":
-            code = text.strip().replace(" ", "")
-            result = await confirm_code(user_id, code)
+    if state["step"] == "waiting_code":
+        code = text.strip().replace(" ", "")
+        result = await confirm_code(user_id, code)
 
-            if result["ok"]:
-                meta = load_account_meta()
-
-                meta[str(user_id)] = {
-                    "ad_name": state.get("ad_name"),
-                    "pc_name": state.get("pc_name"),
-                    "phone": state.get("phone"),
-                }
-
-                save_account_meta(meta)
-
-                if user_id in login_state:
-                    del login_state[user_id]
-
-                await message.answer(result["message"])
-                return
+        if result["ok"]:
+            meta = load_account_meta()
+            meta[str(user_id)] = {
+                "ad_name": state.get("ad_name"),
+                "pc_name": state.get("pc_name"),
+                "phone": state.get("phone"),
+            }
+            save_account_meta(meta)
 
             if user_id in login_state:
                 del login_state[user_id]
 
-            await message.answer(
-                result["message"]
-                + "\n\nЯ сбросил подключение. Напиши заново: подключить тг"
-            )
+            await message.answer(result["message"])
             return
+
+        if user_id in login_state:
+            del login_state[user_id]
+
+        await message.answer(
+            result["message"]
+            + "\n\nЯ сбросил подключение. Напиши заново: подключить тг"
+        )
+        return
 
     # 4. Подключение Telegram
     if (
