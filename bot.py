@@ -488,7 +488,7 @@ async def admin_chat(message: types.Message):
 
         return
 
-        # 3. Состояние подключения Telegram
+    # 3. Состояние подключения Telegram
     if user_id in login_state:
         state = login_state[user_id]
         step = state.get("step")
