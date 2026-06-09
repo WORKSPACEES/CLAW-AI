@@ -6,7 +6,8 @@ from zoneinfo import ZoneInfo
 from supabase_db import supabase
 
 from aiogram import Bot
-from dialog_report import build_report
+from dialog_report import build_reports_by_accounts
+from bot import report_keyboard
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -80,17 +81,26 @@ async def send_shift_report(report_time):
     print("Период:", start_time, "—", end_time)
 
     try:
-        report = build_report(
+        reports = build_reports_by_accounts(
             start_time=start_time,
             end_time=end_time,
             shift_name=shift_name,
+            detailed=False,
         )
 
-        await bot.send_message(REPORT_CHAT_ID, report)
-        print("✅ Отчёт отправлен в канал")
+        if not reports:
+            await bot.send_message(REPORT_CHAT_ID, "За этот период новых диалогов нет.")
+            print("✅ Пустой отчёт отправлен в канал")
+            return
 
-        clear_report_cache(start_time, end_time)
-        print("🧹 Кэш сообщений за смену очищен из Supabase")
+        for report in reports:
+            await bot.send_message(
+                REPORT_CHAT_ID,
+                report["text"],
+                reply_markup=report_keyboard(report["session_name"])
+            )
+
+        print("✅ Отчёты по аккаунтам отправлены в канал")
 
     except Exception as e:
         print("❌ Ошибка отправки отчёта:", e)
