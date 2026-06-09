@@ -6,9 +6,11 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart, Command
 from dotenv import load_dotenv
 from aiogram.types import FSInputFile
+from aiogram.types import WebAppInfo
 from telegram_connect import (
     start_login,
     confirm_code,
+    confirm_2fa,
     list_accounts,
     delete_account_by_phone,
     start_qr_login,
@@ -225,6 +227,25 @@ def login_code_keyboard():
                 InlineKeyboardButton(
                     text="🔳 Войти по QR",
                     callback_data="login_by_qr"
+                )
+            ]
+        ]
+    )
+
+WEBAPP_BASE_URL = os.getenv("WEBAPP_BASE_URL")
+
+def twofa_keyboard(token):
+    if not WEBAPP_BASE_URL:
+        return None
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔐 Ввести 2FA",
+                    web_app=WebAppInfo(
+                        url=f"{WEBAPP_BASE_URL}/twofa?token={token}"
+                    )
                 )
             ]
         ]
@@ -488,6 +509,33 @@ async def admin_chat(message: types.Message):
 
                 state["step"] = "waiting_code"
 
+                if state["step"] == "waiting_2fa":
+                    password = text.strip()
+
+                    await message.answer("🔐 Проверяю пароль 2FA...")
+
+                    result = await confirm_2fa(user_id, password)
+
+                    if result.get("ok"):
+                        if user_id in login_state:
+                            del login_state[user_id]
+
+                        await message.answer(result["message"])
+                        return
+
+                    if result.get("wrong_password"):
+                        await message.answer(result["message"])
+                        return
+
+                    if user_id in login_state:
+                        del login_state[user_id]
+
+                    await message.answer(
+                        result["message"]
+                        + "\n\nЯ сбросил подключение. Напиши заново: подключить тг"
+                    )
+                    return
+
                 await message.answer(
                     result["message"],
                     reply_markup=login_code_keyboard()
@@ -512,6 +560,20 @@ async def admin_chat(message: types.Message):
 
             try:
                 result = await confirm_code(user_id, code)
+
+                result = await confirm_code(user_id, code)
+
+                if result.get("needs_2fa"):
+                    state["step"] = "waiting_2fa"
+                    state["twofa_token"] = result.get("twofa_token")
+
+                    await message.answer(
+                        result["message"] + "\n\nНажми кнопку ниже и введи пароль 2FA.",
+                        reply_markup=twofa_keyboard(result.get("twofa_token"))
+                )
+                return
+
+            if result["ok"]:
 
                 if result["ok"]:
                     meta = load_account_meta()
