@@ -197,9 +197,9 @@ def analyze_dialog_with_groq(dialog_messages):
         direction = msg.get("direction")
 
         if direction == "incoming":
-            role = "Менеджер"
-        elif direction == "outgoing":
             role = "Клиент"
+        elif direction == "outgoing":
+            role = "Менеджер"
         else:
             role = "Неизвестно"
 
@@ -219,8 +219,8 @@ def analyze_dialog_with_groq(dialog_messages):
 Ты анализируешь один Telegram-диалог между клиентом и менеджером.
 
 ВАЖНО ПО РОЛЯМ:
-- Клиент = OUTGOING сообщения.
-- Менеджер = INCOMING сообщения.
+- Менеджер = OUTGOING сообщения.
+- Клиент = INCOMING сообщения.
 - Не путай роли местами.
 - Если строка начинается с "Клиент:" — это клиент.
 - Если строка начинается с "Менеджер:" — это менеджер.
