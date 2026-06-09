@@ -8,12 +8,14 @@ from report_scheduler import main as report_scheduler_main
 
 
 async def health(request):
-    return web.Response(text="CLAW-AI is running")
+    return web.Response(text="OK", status=200)
 
 
 async def start_web_server():
     app = web.Application()
+
     app.router.add_get("/", health)
+    app.router.add_get("/health", health)
 
     port = int(os.environ.get("PORT", 10000))
 
