@@ -1105,6 +1105,33 @@ async def bot_removed_handler(update: types.ChatMemberUpdated):
         except Exception as e:
             print(f"❌ remove_bot_channel ERROR: {e}")
 
+@dp.message(lambda m: m.chat.type == "private" and (m.text or "").lower().strip() in (
+    "загрузи историю", "загрузить историю", "прочитай чаты", "читай историю"
+))
+async def load_history_command(message: types.Message):
+    from multworker import load_accounts, start_account
+    await message.answer("⏳ Запускаю загрузку истории за текущую смену...")
+
+    try:
+        accounts = load_accounts()
+
+        if not accounts:
+            await message.answer("❌ Нет подключённых аккаунтов.")
+            return
+
+        for account in accounts:
+            username = account.get("username") or account.get("phone")
+            await message.answer(f"🔄 Читаю историю: @{username}...")
+            client = await start_account(account)
+            if client:
+                await client.disconnect()
+
+        await message.answer("✅ История загружена. Теперь можешь запросить отчёт.")
+
+    except Exception as e:
+        print("❌ LOAD HISTORY ERROR:", e)
+        await message.answer(f"❌ Ошибка загрузки истории: {e}")
+
 @dp.channel_post()
 async def channel_post_handler(message: types.Message):
     print("CHANNEL ID:", message.chat.id)
