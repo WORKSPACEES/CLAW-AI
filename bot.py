@@ -1001,6 +1001,31 @@ async def forwarded_channel_message(message: types.Message):
     except Exception as e:
         await message.answer(f"❌ Не смог сохранить канал: {e}")
 
+@dp.message(lambda m: m.chat.type in ("group", "supergroup"))
+async def group_message_handler(message: types.Message):
+    text = (message.text or "").strip().lower()
+
+    if text != "claw":
+        return
+
+    try:
+        channel_id = str(message.chat.id)
+        channel_title = message.chat.title or channel_id
+
+        save_bot_channels("default", [{
+            "channel_id": channel_id,
+            "channel_title": channel_title,
+        }])
+
+        await bot.send_message(
+            channel_id,
+            f"✅ Группа «{channel_title}» подключена.\nТеперь можно привязывать Telegram-аккаунты."
+        )
+
+        print(f"✅ Группа сохранена: {channel_title} ({channel_id})")
+    except Exception as e:
+        print("❌ group_message_handler SAVE ERROR:", e)
+
 @dp.channel_post()
 async def channel_post_handler(message: types.Message):
     print("CHANNEL ID:", message.chat.id)
@@ -1014,7 +1039,7 @@ async def channel_post_handler(message: types.Message):
     try:
         channel_id = str(message.chat.id)
         channel_title = message.chat.title or channel_id
-        owner_user_id = str(REPORT_CHAT_ID or "default")
+        owner_user_id = "default"
 
         save_bot_channels(owner_user_id, [{
             "channel_id": channel_id,
