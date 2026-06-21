@@ -256,6 +256,19 @@ def build_channel_keyboard(channels: list) -> InlineKeyboardMarkup:
     ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+def build_report_channel_keyboard(channels: list) -> InlineKeyboardMarkup:
+    buttons = []
+    for ch in channels:
+        title = ch.get("channel_title") or ch.get("channel_id")
+        cid = ch.get("channel_id")
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📢 {title}",
+                callback_data=f"report_to_channel:{cid}:{title[:30]}"
+            )
+        ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
 def login_code_keyboard():
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -347,6 +360,61 @@ async def pick_channel_callback(callback: types.CallbackQuery):
         chat_id=user_id,
         text=f"✅ Канал выбран: {channel_title}\n\nКакая реклама?"
     )
+
+@dp.callback_query(lambda c: c.data.startswith("report_to_channel:"))
+async def report_to_channel_callback(callback: types.CallbackQuery):
+    parts = callback.data.split(":", 2)
+    channel_id = parts[1] if len(parts) > 1 else None
+    channel_title = parts[2] if len(parts) > 2 else "Канал"
+
+    await callback.answer()
+    await bot.send_message(
+        chat_id=callback.from_user.id,
+        text=f"📊 Собираю отчёт для «{channel_title}»..."
+    )
+
+    try:
+        all_channels = get_all_account_channels()
+
+        # Берём только session_name привязанные к выбранному каналу
+        session_names = [
+            row["session_name"]
+            for row in all_channels
+            if str(row["channel_id"]) == str(channel_id)
+        ]
+
+        reports = build_reports_by_accounts(detailed=False)
+
+        filtered = [
+            r for r in reports
+            if r["session_name"] in session_names
+        ]
+
+        if not filtered:
+            await bot.send_message(
+                chat_id=callback.from_user.id,
+                text="За этот период новых диалогов нет по этому каналу."
+            )
+            return
+
+        for report in filtered:
+            await bot.send_message(
+                channel_id,
+                report["text"],
+                reply_markup=report_keyboard(report["session_name"])
+            )
+
+        await bot.send_message(
+            chat_id=callback.from_user.id,
+            text=f"✅ Отчёт отправлен в «{channel_title}»"
+        )
+
+    except Exception as e:
+        print("REPORT TO CHANNEL CALLBACK ERROR:", e)
+        await bot.send_message(
+            chat_id=callback.from_user.id,
+            text=f"❌ Ошибка отчёта: {e}"
+        )
 
 @dp.callback_query(lambda c: c.data == "login_by_qr")
 async def login_by_qr_callback(callback: types.CallbackQuery):
@@ -526,41 +594,16 @@ async def admin_chat(message: types.Message):
         or "в канал отчет" in lower_text
         or "отчет в канал кинь" in lower_text
     ):
-        if not REPORT_CHAT_ID:
-            await message.answer("❌ REPORT_CHAT_ID не указан")
+        channels = get_bot_channels("default")
+
+        if not channels:
+            await message.answer("❌ Нет подключённых каналов. Напиши Claw в нужном канале/группе.")
             return
 
-        await message.answer("📊 Собираю отчёт и отправляю в канал...")
-
-        try:
-            reports = build_reports_by_accounts(detailed=False)
-
-            account_channels = {
-                row["session_name"]: row
-                for row in get_all_account_channels()
-            }
-
-            if not reports:
-                await bot.send_message(REPORT_CHAT_ID, "За этот период новых диалогов нет.")
-                await message.answer("✅ Отчёт отправлен в канал")
-                return
-
-            for report in reports:
-                session_name = report["session_name"]
-                channel = account_channels.get(session_name)
-                target_chat = channel["channel_id"] if channel else REPORT_CHAT_ID
-
-                await bot.send_message(
-                    target_chat,
-                    report["text"],
-                    reply_markup=report_keyboard(session_name)
-                )
-
-            await message.answer("✅ Отчёт отправлен в каналы")
-
-        except Exception as e:
-            print("DIALOG CHANNEL REPORT ERROR:", e)
-            await message.answer(f"❌ Ошибка отправки отчёта в канал: {e}")
+        await message.answer(
+            "В какой канал отправить отчёт?",
+            reply_markup=build_report_channel_keyboard(channels)
+        )
 
         return
 
