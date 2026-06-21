@@ -228,6 +228,26 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
     phone = account_data.get("phone") or "-"
 
     for username, dialog_messages in dialogs.items():
+        # Пропускаем системные чаты Telegram
+        dialog_id = str(dialog_messages[0].get("dialog_id") or "")
+        if dialog_id in ("777000", "42777", "0"):
+            continue
+
+        # Пропускаем ботов
+        uname = str(username).lower()
+        if uname.endswith("bot") or uname == "unknown":
+            continue
+
+        # Пропускаем диалоги без входящих сообщений — только исходящие не считаем лидами
+        has_incoming = any(m.get("direction") == "incoming" for m in dialog_messages)
+        if not has_incoming:
+            continue
+
+        # Пропускаем пустые диалоги
+        has_text = any(m.get("text", "").strip() for m in dialog_messages)
+        if not has_text:
+            continue
+
         result = analyze_dialog(username, dialog_messages)
         results.append(result)
 
