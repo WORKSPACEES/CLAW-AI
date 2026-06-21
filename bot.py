@@ -340,12 +340,12 @@ async def pick_channel_callback(callback: types.CallbackQuery):
         state["report_channel_id"] = channel_id
         state["report_channel_title"] = channel_title
 
-    state["step"] = "waiting_pc_name"
+    state["step"] = "waiting_ad_name"
 
     await callback.answer()
     await bot.send_message(
         chat_id=user_id,
-        text=f"✅ Канал выбран: {channel_title}\n\nТеперь напиши какой ПК / оператор?"
+        text=f"✅ Канал выбран: {channel_title}\n\nКакая реклама?"
     )
 
 @dp.callback_query(lambda c: c.data == "login_by_qr")
