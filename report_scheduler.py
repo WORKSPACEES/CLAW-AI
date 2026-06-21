@@ -3,7 +3,7 @@ import asyncio
 from pathlib import Path
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from supabase_db import supabase
+from supabase_db import supabase, get_all_account_channels
 
 from aiogram import Bot
 from dialog_report import build_reports_by_accounts
@@ -88,19 +88,33 @@ async def send_shift_report(report_time):
             detailed=False,
         )
 
+        # Загружаем привязки аккаунт → канал
+        account_channels = {
+            row["session_name"]: row
+            for row in get_all_account_channels()
+        }
+
         if not reports:
             await bot.send_message(REPORT_CHAT_ID, "За этот период новых диалогов нет.")
             print("✅ Пустой отчёт отправлен в канал")
             return
 
         for report in reports:
+            session_name = report["session_name"]
+            channel = account_channels.get(session_name)
+
+            # Если есть привязка — шлём в свой канал, иначе в дефолтный
+            target_chat = channel["channel_id"] if channel else REPORT_CHAT_ID
+
             await bot.send_message(
-                REPORT_CHAT_ID,
+                target_chat,
                 report["text"],
-                reply_markup=report_keyboard(report["session_name"])
+                reply_markup=report_keyboard(session_name)
             )
 
-        print("✅ Отчёты по аккаунтам отправлены в канал")
+            print(f"✅ Отчёт [{session_name}] → {target_chat}")
+
+        print("✅ Отчёты по аккаунтам отправлены")
 
     except Exception as e:
         print("❌ Ошибка отправки отчёта:", e)
