@@ -443,6 +443,27 @@ async def login_by_qr_callback(callback: types.CallbackQuery):
 @dp.message()
 async def admin_chat(message: types.Message):
     # Игнорируем сообщения из каналов и групп — только личка
+    # Для групп — только команда Claw
+    if message.chat.type in ("group", "supergroup"):
+        text_check = (message.text or "").strip().lower()
+        if text_check == "claw":
+            try:
+                channel_id = str(message.chat.id)
+                channel_title = message.chat.title or channel_id
+                save_bot_channels("default", [{
+                    "channel_id": channel_id,
+                    "channel_title": channel_title,
+                }])
+                await message.answer(
+                    f"✅ Группа «{channel_title}» подключена.\n"
+                    "Теперь можно привязывать Telegram-аккаунты."
+                )
+                print(f"✅ Группа сохранена: {channel_title} ({channel_id})")
+            except Exception as e:
+                print("❌ GROUP SAVE ERROR:", e)
+        return
+
+    # Каналы и остальное — игнорируем
     if message.chat.type != "private":
         return
 
