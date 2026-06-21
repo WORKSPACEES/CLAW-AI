@@ -25,6 +25,13 @@ from database import get_today_stats, get_today_messages, get_messages_by_chat_q
 from ai import analyze_messages_with_groq, chat_with_groq
 from command_memory import detect_command_by_memory, auto_learn_from_previous
 from image_ai import build_image_url
+from supabase_db import (
+    save_bot_channels,
+    get_bot_channels,
+    link_account_to_channel,
+    get_channel_for_account,
+    get_all_account_channels,
+)
 
 load_dotenv()
 
@@ -220,6 +227,35 @@ def report_keyboard(session_name):
         ]
     )
 
+async def refresh_bot_channels(owner_user_id: int) -> list:
+    """Читает из Supabase список каналов/групп где бот является админом."""
+    try:
+        return get_bot_channels(str(owner_user_id))
+    except Exception as e:
+        print("❌ refresh_bot_channels ERROR:", e)
+        return []
+
+
+def build_channel_keyboard(channels: list) -> InlineKeyboardMarkup:
+    """Строит клавиатуру с кнопками выбора канала/группы."""
+    buttons = []
+    for ch in channels:
+        title = ch.get("channel_title") or ch.get("channel_id")
+        cid = ch.get("channel_id")
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📢 {title}",
+                callback_data=f"pick_channel:{cid}:{title[:30]}"
+            )
+        ])
+    buttons.append([
+        InlineKeyboardButton(
+            text="⏭ Пропустить (без канала)",
+            callback_data="pick_channel:skip:Без канала"
+        )
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
 def login_code_keyboard():
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -284,6 +320,34 @@ async def full_report_callback(callback: types.CallbackQuery):
         print("FULL REPORT CALLBACK ERROR:", e)
         await callback.answer("Ошибка развёрнутого отчёта", show_alert=True)
 
+@dp.callback_query(lambda c: c.data.startswith("pick_channel:"))
+async def pick_channel_callback(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    state = login_state.get(user_id)
+
+    if not state:
+        await callback.answer("Сессия устарела. Начни заново: подключить тг", show_alert=True)
+        return
+
+    parts = callback.data.split(":", 2)
+    channel_id = parts[1] if len(parts) > 1 else "skip"
+    channel_title = parts[2] if len(parts) > 2 else "Без канала"
+
+    if channel_id == "skip":
+        state["report_channel_id"] = None
+        state["report_channel_title"] = None
+    else:
+        state["report_channel_id"] = channel_id
+        state["report_channel_title"] = channel_title
+
+    state["step"] = "waiting_pc_name"
+
+    await callback.answer()
+    await bot.send_message(
+        chat_id=user_id,
+        text=f"✅ Канал выбран: {channel_title}\n\nТеперь напиши какой ПК / оператор?"
+    )
+
 @dp.callback_query(lambda c: c.data == "login_by_qr")
 async def login_by_qr_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -341,12 +405,32 @@ async def login_by_qr_callback(callback: types.CallbackQuery):
         return
 
     if wait_result.get("ok"):
+        channel_id = state.get("report_channel_id")
+        channel_title = state.get("report_channel_title") or "Без канала"
+
+        if channel_id:
+            accounts = list_accounts(user_id)
+            session_name = None
+
+            for acc in accounts:
+                session_name = acc.get("session_name")
+                break
+
+            if session_name:
+                link_account_to_channel(
+                    str(user_id),
+                    session_name,
+                    channel_id,
+                    channel_title,
+                )
+
         if user_id in login_state:
             del login_state[user_id]
 
+        channel_msg = f"\n📢 Отчёты будут в: {channel_title}" if channel_id else ""
         await bot.send_message(
             chat_id=user_id,
-            text=wait_result["message"]
+            text=wait_result["message"] + channel_msg
         )
         return
 
@@ -426,19 +510,28 @@ async def admin_chat(message: types.Message):
         try:
             reports = build_reports_by_accounts(detailed=False)
 
+            account_channels = {
+                row["session_name"]: row
+                for row in get_all_account_channels()
+            }
+
             if not reports:
                 await bot.send_message(REPORT_CHAT_ID, "За этот период новых диалогов нет.")
                 await message.answer("✅ Отчёт отправлен в канал")
                 return
 
             for report in reports:
+                session_name = report["session_name"]
+                channel = account_channels.get(session_name)
+                target_chat = channel["channel_id"] if channel else REPORT_CHAT_ID
+
                 await bot.send_message(
-                    REPORT_CHAT_ID,
+                    target_chat,
                     report["text"],
-                    reply_markup=report_keyboard(report["session_name"])
+                    reply_markup=report_keyboard(session_name)
                 )
 
-            await message.answer("✅ Отчёт отправлен в канал")
+            await message.answer("✅ Отчёт отправлен в каналы")
 
         except Exception as e:
             print("DIALOG CHANNEL REPORT ERROR:", e)
@@ -574,10 +667,33 @@ async def admin_chat(message: types.Message):
 
                     save_account_meta(meta)
 
+                    # Привязываем аккаунт к выбранному каналу
+                    channel_id = state.get("report_channel_id")
+                    channel_title = state.get("report_channel_title") or "Без канала"
+
+                    if channel_id:
+                        accounts = list_accounts(user_id)
+                        phone = state.get("phone", "")
+                        session_name = None
+
+                        for acc in accounts:
+                            if acc.get("phone", "").replace("+", "") in phone.replace("+", ""):
+                                session_name = acc.get("session_name")
+                                break
+
+                        if session_name:
+                            link_account_to_channel(
+                                str(user_id),
+                                session_name,
+                                channel_id,
+                                channel_title,
+                            )
+
                     if user_id in login_state:
                         del login_state[user_id]
 
-                    await message.answer(result["message"])
+                    channel_msg = f"\n📢 Отчёты будут в: {channel_title}" if channel_id else ""
+                    await message.answer(result["message"] + channel_msg)
                     return
 
                 if user_id in login_state:
@@ -659,13 +775,30 @@ async def admin_chat(message: types.Message):
         or "тг подключим давай сейчас" in lower_text
         or "тг нужно подключить" in lower_text
     ):
+        channels = await refresh_bot_channels(user_id)
+
         login_state[user_id] = {
-            "step": "waiting_ad_name",
+            "step": "waiting_channel",
+            "report_channel_id": None,
+            "report_channel_title": None,
             "ad_name": None,
             "pc_name": None,
             "phone": None,
         }
-        await message.answer("Окей. Какая реклама?")
+
+        if channels:
+            await message.answer(
+                "Окей. В какой канал или группу закрепить этот Telegram?",
+                reply_markup=build_channel_keyboard(channels)
+            )
+        else:
+            state = login_state[user_id]
+            state["step"] = "waiting_pc_name"
+            await message.answer(
+                "⚠️ Я пока не вижу каналов где я админ.\n\n"
+                "Добавь меня как админа в нужный канал/группу, потом попробуй снова.\n\n"
+                "Или продолжим без канала — какой ПК / оператор?"
+            )
         return
 
     # 5. Список аккаунтов
@@ -840,6 +973,21 @@ async def admin_chat(message: types.Message):
 async def channel_post_handler(message: types.Message):
     print("CHANNEL ID:", message.chat.id)
     print("CHANNEL TITLE:", message.chat.title)
+
+    # Запоминаем канал/группу где бот получил сообщение (значит он там админ)
+    try:
+        channel_id = str(message.chat.id)
+        channel_title = message.chat.title or channel_id
+        owner_user_id = str(REPORT_CHAT_ID or "default")
+
+        save_bot_channels(owner_user_id, [{
+            "channel_id": channel_id,
+            "channel_title": channel_title,
+        }])
+
+        print(f"✅ Канал сохранён: {channel_title} ({channel_id})")
+    except Exception as e:
+        print("❌ channel_post_handler SAVE ERROR:", e)
 
 
 async def main():
