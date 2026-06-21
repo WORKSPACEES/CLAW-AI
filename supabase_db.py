@@ -70,7 +70,6 @@ def get_bot_channels(owner_user_id: str) -> list:
     result = (
         supabase.table("report_channels")
         .select("channel_id, channel_title")
-        .eq("owner_user_id", str(owner_user_id))
         .eq("session_name", "__bot__")
         .execute()
     )
