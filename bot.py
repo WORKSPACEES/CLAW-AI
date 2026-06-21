@@ -442,6 +442,10 @@ async def login_by_qr_callback(callback: types.CallbackQuery):
 
 @dp.message()
 async def admin_chat(message: types.Message):
+    # Игнорируем сообщения из каналов и групп — только личка
+    if message.chat.type != "private":
+        return
+
     text = message.text or ""
 
     if text.startswith("/"):
@@ -969,12 +973,44 @@ async def admin_chat(message: types.Message):
     await message.answer("Команду понял, но действие пока не подключено.")
 
 
+@dp.message(Command("addchannel"))
+async def add_channel_command(message: types.Message):
+    await message.answer(
+        "📢 Перешли мне любое сообщение из нужного канала или группы.\n\n"
+        "Я запомню его ID и буду слать туда отчёты."
+    )
+
+
+@dp.message(lambda m: m.forward_from_chat is not None)
+async def forwarded_channel_message(message: types.Message):
+    chat = message.forward_from_chat
+    channel_id = str(chat.id)
+    channel_title = chat.title or channel_id
+    owner_user_id = str(message.from_user.id)
+
+    try:
+        save_bot_channels(owner_user_id, [{
+            "channel_id": channel_id,
+            "channel_title": channel_title,
+        }])
+        await message.answer(
+            f"✅ Канал сохранён: {channel_title}\n"
+            f"ID: {channel_id}\n\n"
+            "Теперь при подключении TG ты сможешь выбрать его из списка."
+        )
+    except Exception as e:
+        await message.answer(f"❌ Не смог сохранить канал: {e}")
+
 @dp.channel_post()
 async def channel_post_handler(message: types.Message):
     print("CHANNEL ID:", message.chat.id)
     print("CHANNEL TITLE:", message.chat.title)
 
-    # Запоминаем канал/группу где бот получил сообщение (значит он там админ)
+    text = (message.text or "").strip().lower()
+
+    if text != "claw":
+        return
+
     try:
         channel_id = str(message.chat.id)
         channel_title = message.chat.title or channel_id
@@ -984,6 +1020,11 @@ async def channel_post_handler(message: types.Message):
             "channel_id": channel_id,
             "channel_title": channel_title,
         }])
+
+        await bot.send_message(
+            channel_id,
+            f"✅ Канал «{channel_title}» подключён.\nТеперь можно привязывать Telegram-аккаунты."
+        )
 
         print(f"✅ Канал сохранён: {channel_title} ({channel_id})")
     except Exception as e:
