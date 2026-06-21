@@ -31,6 +31,7 @@ from supabase_db import (
     link_account_to_channel,
     get_channel_for_account,
     get_all_account_channels,
+    remove_bot_channel,
 )
 
 load_dotenv()
@@ -1089,6 +1090,20 @@ async def group_message_handler(message: types.Message):
         print(f"✅ Группа сохранена: {channel_title} ({channel_id})")
     except Exception as e:
         print("❌ group_message_handler SAVE ERROR:", e)
+
+@dp.my_chat_member()
+async def bot_removed_handler(update: types.ChatMemberUpdated):
+    new_status = update.new_chat_member.status
+
+    if new_status in ("left", "kicked", "restricted"):
+        channel_id = str(update.chat.id)
+        channel_title = update.chat.title or channel_id
+
+        try:
+            remove_bot_channel(channel_id)
+            print(f"🗑 Бот удалён из: {channel_title} ({channel_id}), канал убран из списка")
+        except Exception as e:
+            print(f"❌ remove_bot_channel ERROR: {e}")
 
 @dp.channel_post()
 async def channel_post_handler(message: types.Message):
