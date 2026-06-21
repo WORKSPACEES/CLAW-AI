@@ -106,3 +106,9 @@ def get_all_account_channels() -> list:
         .execute()
     )
     return result.data or []
+
+def remove_bot_channel(channel_id: str):
+    """Удаляет канал/группу из списка когда бота удаляют."""
+    supabase.table("report_channels").delete().eq(
+        "channel_id", str(channel_id)
+    ).eq("session_name", "__bot__").execute()
