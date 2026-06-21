@@ -53,3 +53,57 @@ def save_lead_supabase(
     }
 
     supabase.table("telegram_leads").insert(data).execute()
+
+# ─── report_channels ──────────────────────────────────────────────────────────
+
+def save_bot_channels(owner_user_id: str, channels: list):
+    for ch in channels:
+        supabase.table("report_channels").upsert({
+            "owner_user_id": str(owner_user_id),
+            "session_name": "__bot__",
+            "channel_id": str(ch["channel_id"]),
+            "channel_title": ch.get("channel_title", ""),
+        }, on_conflict="session_name,channel_id").execute()
+
+
+def get_bot_channels(owner_user_id: str) -> list:
+    result = (
+        supabase.table("report_channels")
+        .select("channel_id, channel_title")
+        .eq("owner_user_id", str(owner_user_id))
+        .eq("session_name", "__bot__")
+        .execute()
+    )
+    return result.data or []
+
+
+def link_account_to_channel(owner_user_id: str, session_name: str, channel_id: str, channel_title: str):
+    supabase.table("report_channels").upsert({
+        "owner_user_id": str(owner_user_id),
+        "session_name": session_name,
+        "channel_id": str(channel_id),
+        "channel_title": channel_title,
+    }, on_conflict="session_name,channel_id").execute()
+
+
+def get_channel_for_account(session_name: str):
+    result = (
+        supabase.table("report_channels")
+        .select("channel_id, channel_title")
+        .eq("session_name", session_name)
+        .neq("session_name", "__bot__")
+        .limit(1)
+        .execute()
+    )
+    data = result.data or []
+    return data[0] if data else None
+
+
+def get_all_account_channels() -> list:
+    result = (
+        supabase.table("report_channels")
+        .select("session_name, channel_id, channel_title")
+        .neq("session_name", "__bot__")
+        .execute()
+    )
+    return result.data or []
