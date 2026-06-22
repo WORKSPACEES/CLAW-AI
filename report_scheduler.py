@@ -3,7 +3,7 @@ import asyncio
 from pathlib import Path
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from supabase_db import supabase, get_all_account_channels
+from supabase_db import supabase, get_all_account_channels, get_all_timer_settings
 
 from aiogram import Bot
 from dialog_report import build_reports_by_accounts
@@ -41,20 +41,63 @@ if not REPORT_CHAT_ID:
 
 bot = Bot(token=BOT_TOKEN)
 
+def get_last_sent_slot_for(slot_id: str) -> bool:
+    """Возвращает True если этот slot_id уже был отправлен."""
+    try:
+        result = (
+            supabase.table("scheduler_state")
+            .select("id")
+            .eq("id", slot_id)
+            .execute()
+        )
+        return bool(result.data)
+    except Exception as e:
+        print("⚠️ get_last_sent_slot_for ERROR:", e)
+    return False
 
-def get_next_report_time():
-    now = datetime.now(KYIV_TZ)
 
-    today_9 = now.replace(hour=9, minute=0, second=0, microsecond=0)
-    today_21 = now.replace(hour=21, minute=0, second=0, microsecond=0)
+def set_last_sent_slot(slot_id: str):
+    """Помечает slot_id как отправленный."""
+    try:
+        supabase.table("scheduler_state").upsert({
+            "id": slot_id,
+            "last_sent_slot": slot_id,
+        }).execute()
+    except Exception as e:
+        print("⚠️ set_last_sent_slot ERROR:", e)
 
-    if now < today_9:
-        return today_9
 
-    if now < today_21:
-        return today_21
+def get_all_due_slots(now):
+    """
+    Возвращает список (slot_id, slot_time, channel_id) для всех каналов
+    у которых есть настройки таймера и чей слот уже наступил.
+    Если для канала нет настроек — использует дефолт 9:00 / 21:00.
+    """
+    settings_list = get_all_timer_settings()
 
-    return today_9 + timedelta(days=1)
+    # Если нет ни одной настройки — дефолтный режим (один канал REPORT_CHAT_ID)
+    if not settings_list:
+        settings_list = [{
+            "channel_id": REPORT_CHAT_ID,
+            "channel_title": "default",
+            "day_hour": 21,
+            "day_minute": 0,
+            "night_hour": 9,
+            "night_minute": 0,
+        }]
+
+    due = []
+    for s in settings_list:
+        channel_id = s["channel_id"]
+        for hour, minute in [(s["day_hour"], s["day_minute"]), (s["night_hour"], s["night_minute"])]:
+            slot_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if now < slot_time:
+                slot_time -= timedelta(days=1)
+            slot_id = f"{channel_id}__{slot_time.strftime('%Y-%m-%d_%H:%M')}"
+            due.append((slot_id, slot_time, channel_id))
+
+    return due
+
 
 
 def get_shift_for_report(report_time):
@@ -72,7 +115,7 @@ def get_shift_for_report(report_time):
     return start_time, end_time, shift_name
 
 
-async def send_shift_report(report_time):
+async def send_shift_report(report_time, target_channel_id=None):
     start_time, end_time, shift_name = get_shift_for_report(report_time)
 
     print("=" * 50)
@@ -104,7 +147,7 @@ async def send_shift_report(report_time):
             channel = account_channels.get(session_name)
 
             # Если есть привязка — шлём в свой канал, иначе в дефолтный
-            target_chat = channel["channel_id"] if channel else REPORT_CHAT_ID
+            target_chat = channel["channel_id"] if channel else (target_channel_id or REPORT_CHAT_ID)
 
             await bot.send_message(
                 target_chat,
@@ -126,19 +169,19 @@ async def main():
     print("Канал отчётов:", REPORT_CHAT_ID)
 
     while True:
-        next_time = get_next_report_time()
         now = datetime.now(KYIV_TZ)
+        due_slots = get_all_due_slots(now)
 
-        wait_seconds = (next_time - now).total_seconds()
+        for slot_id, slot_time, channel_id in due_slots:
+            last_sent = get_last_sent_slot_for(slot_id)
+            if not last_sent:
+                print("=" * 50)
+                print("🔔 Неотправленный слот:", slot_id)
+                print("Канал:", channel_id)
+                print("Сейчас:", now.strftime("%d.%m.%Y %H:%M:%S"))
 
-        print("=" * 50)
-        print("Сейчас:", now.strftime("%d.%m.%Y %H:%M:%S"))
-        print("Следующий отчёт:", next_time.strftime("%d.%m.%Y %H:%M:%S"))
-        print("Ждать секунд:", int(wait_seconds))
-
-        await asyncio.sleep(max(1, wait_seconds))
-
-        await send_shift_report(next_time)
+                await send_shift_report(slot_time, channel_id)
+                set_last_sent_slot(slot_id)
 
         await asyncio.sleep(60)
 
