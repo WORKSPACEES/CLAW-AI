@@ -4,6 +4,9 @@ import requests
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.filters import StateFilter
 from dotenv import load_dotenv
 from aiogram.types import FSInputFile
 from aiogram.types import WebAppInfo
@@ -32,9 +35,58 @@ from supabase_db import (
     get_channel_for_account,
     get_all_account_channels,
     remove_bot_channel,
+    get_timer_settings,
+    set_timer_settings,
 )
-
 load_dotenv()
+
+class TimerSetup(StatesGroup):
+    choosing_channel = State()
+    waiting_day_time = State()
+    waiting_night_time = State()
+    confirming = State()
+
+
+def parse_time(text: str):
+    """
+    Парсит время из строки. Принимает форматы: 21:00, 21-00, 21.00, 21
+    Возвращает (hour, minute) или None если не распознал.
+    """
+    text = text.strip()
+    match = re.match(r"^(\d{1,2})[:.\-](\d{2})$", text)
+    if match:
+        h, m = int(match.group(1)), int(match.group(2))
+        if 0 <= h <= 23 and 0 <= m <= 59:
+            return h, m
+    match = re.match(r"^(\d{1,2})$", text)
+    if match:
+        h = int(match.group(1))
+        if 0 <= h <= 23:
+            return h, 0
+    return None
+
+
+def build_timer_channel_keyboard(channels: list) -> InlineKeyboardMarkup:
+    buttons = []
+    for ch in channels:
+        title = ch.get("channel_title") or ch.get("channel_id")
+        cid = ch.get("channel_id")
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📢 {title}",
+                callback_data=f"timer_pick_channel:{cid}:{title[:30]}"
+            )
+        ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def build_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Сохранить", callback_data="timer_confirm:yes"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="timer_confirm:no"),
+        ]
+    ])
 
 last_unknown_text = {}
 login_state = {}
@@ -1028,7 +1080,6 @@ async def admin_chat(message: types.Message):
         return
 
     if intent == "schedule_report":
-        await message.answer("✅ Понял. Расписание отчётов подключим следующим шагом.")
         return
 
     if intent == "analyze_chat_now":
@@ -1065,6 +1116,121 @@ async def forwarded_channel_message(message: types.Message):
         )
     except Exception as e:
         await message.answer(f"❌ Не смог сохранить канал: {e}")
+
+@dp.message(lambda m: (m.text or "").strip().lower() == "установить таймер")
+async def set_timer_start(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    channels = await refresh_bot_channels(user_id)
+
+    if not channels:
+        await message.answer(
+            "⚠️ Нет каналов где я являюсь админом.\n"
+            "Добавь меня как админа в нужный канал и попробуй снова."
+        )
+        return
+
+    await state.set_state(TimerSetup.choosing_channel)
+    await message.answer(
+        "📢 Для какого канала установить расписание?",
+        reply_markup=build_timer_channel_keyboard(channels)
+    )
+
+
+@dp.callback_query(lambda c: c.data.startswith("timer_pick_channel:"), StateFilter(TimerSetup.choosing_channel))
+async def timer_channel_picked(callback: types.CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":", 2)
+    channel_id = parts[1]
+    channel_title = parts[2] if len(parts) > 2 else channel_id
+
+    await state.update_data(channel_id=channel_id, channel_title=channel_title)
+    await state.set_state(TimerSetup.waiting_day_time)
+
+    await callback.answer()
+    await bot.send_message(
+        chat_id=callback.from_user.id,
+        text=f"✅ Канал: {channel_title}\n\n🌙 В какое время отправлять дневной отчёт?\n\nФормат: 21:00 или 21"
+    )
+
+
+@dp.message(StateFilter(TimerSetup.waiting_day_time))
+async def timer_day_time(message: types.Message, state: FSMContext):
+    parsed = parse_time(message.text or "")
+    if not parsed:
+        await message.answer("❌ Не понял время. Напиши в формате 21:00 или просто 21")
+        return
+
+    h, m = parsed
+    await state.update_data(day_hour=h, day_minute=m)
+    await state.set_state(TimerSetup.waiting_night_time)
+    await message.answer(
+        f"✅ Дневной отчёт: {h:02d}:{m:02d}\n\n🌅 В какое время отправлять ночной отчёт?\n\nФормат: 9:00 или 9"
+    )
+
+
+@dp.message(StateFilter(TimerSetup.waiting_night_time))
+async def timer_night_time(message: types.Message, state: FSMContext):
+    parsed = parse_time(message.text or "")
+    if not parsed:
+        await message.answer("❌ Не понял время. Напиши в формате 9:00 или просто 9")
+        return
+
+    h, m = parsed
+    await state.update_data(night_hour=h, night_minute=m)
+    await state.set_state(TimerSetup.confirming)
+
+    data = await state.get_data()
+    dh, dm = data["day_hour"], data["day_minute"]
+    nh, nm = h, m
+    title = data["channel_title"]
+
+    await message.answer(
+        f"📋 Проверь настройки:\n\n"
+        f"📢 Канал: {title}\n"
+        f"🌙 Дневной отчёт: {dh:02d}:{dm:02d}\n"
+        f"🌅 Ночной отчёт: {nh:02d}:{nm:02d}\n\n"
+        f"Сохранить?",
+        reply_markup=build_confirm_keyboard()
+    )
+
+
+@dp.callback_query(lambda c: c.data.startswith("timer_confirm:"), StateFilter(TimerSetup.confirming))
+async def timer_confirm(callback: types.CallbackQuery, state: FSMContext):
+    answer = callback.data.split(":")[1]
+
+    if answer == "no":
+        await state.clear()
+        await callback.answer()
+        await bot.send_message(chat_id=callback.from_user.id, text="❌ Отменено. Таймер не изменён.")
+        return
+
+    data = await state.get_data()
+    ok = set_timer_settings(
+        channel_id=data["channel_id"],
+        channel_title=data["channel_title"],
+        day_hour=data["day_hour"],
+        day_minute=data["day_minute"],
+        night_hour=data["night_hour"],
+        night_minute=data["night_minute"],
+    )
+
+    await state.clear()
+    await callback.answer()
+
+    if ok:
+        await bot.send_message(
+            chat_id=callback.from_user.id,
+            text=(
+                f"✅ Расписание сохранено!\n\n"
+                f"📢 {data['channel_title']}\n"
+                f"🌙 Дневной: {data['day_hour']:02d}:{data['day_minute']:02d}\n"
+                f"🌅 Ночной: {data['night_hour']:02d}:{data['night_minute']:02d}"
+            )
+        )
+    else:
+        await bot.send_message(
+            chat_id=callback.from_user.id,
+            text="❌ Ошибка сохранения. Попробуй ещё раз."
+        )
 
 @dp.message(lambda m: m.chat.type in ("group", "supergroup"))
 async def group_message_handler(message: types.Message):
