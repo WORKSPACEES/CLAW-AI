@@ -153,3 +153,10 @@ def get_all_timer_settings():
     except Exception as e:
         print("⚠️ get_all_timer_settings ERROR:", e)
         return []
+
+def remove_bot_channel(channel_id: str):
+    """Удаляет канал из report_channels когда бот был удалён из него."""
+    try:
+        supabase.table("report_channels").delete().eq("channel_id", str(channel_id)).execute()
+    except Exception as e:
+        print("⚠️ remove_bot_channel ERROR:", e)
