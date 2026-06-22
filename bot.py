@@ -561,6 +561,24 @@ async def login_by_qr_callback(callback: types.CallbackQuery):
     )
     return
 
+@dp.message(lambda m: (m.text or "").strip().lower() == "установить таймер")
+async def set_timer_start(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    channels = await refresh_bot_channels(user_id)
+
+    if not channels:
+        await message.answer(
+            "⚠️ Нет каналов где я являюсь админом.\n"
+            "Добавь меня как админа в нужный канал и попробуй снова."
+        )
+        return
+
+    await state.set_state(TimerSetup.choosing_channel)
+    await message.answer(
+        "📢 Для какого канала установить расписание?",
+        reply_markup=build_timer_channel_keyboard(channels)
+    )
+
 @dp.message()
 async def admin_chat(message: types.Message):
     # Игнорируем сообщения из каналов и групп — только личка
@@ -1116,24 +1134,6 @@ async def forwarded_channel_message(message: types.Message):
         )
     except Exception as e:
         await message.answer(f"❌ Не смог сохранить канал: {e}")
-
-@dp.message(lambda m: (m.text or "").strip().lower() == "установить таймер")
-async def set_timer_start(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    channels = await refresh_bot_channels(user_id)
-
-    if not channels:
-        await message.answer(
-            "⚠️ Нет каналов где я являюсь админом.\n"
-            "Добавь меня как админа в нужный канал и попробуй снова."
-        )
-        return
-
-    await state.set_state(TimerSetup.choosing_channel)
-    await message.answer(
-        "📢 Для какого канала установить расписание?",
-        reply_markup=build_timer_channel_keyboard(channels)
-    )
 
 
 @dp.callback_query(lambda c: c.data.startswith("timer_pick_channel:"), StateFilter(TimerSetup.choosing_channel))
