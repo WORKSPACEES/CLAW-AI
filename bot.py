@@ -283,7 +283,10 @@ def report_keyboard(session_name):
 async def refresh_bot_channels(owner_user_id: int) -> list:
     """Читает из Supabase список каналов/групп где бот является админом."""
     try:
-        return get_bot_channels(str(owner_user_id))
+        return await asyncio.to_thread(
+            get_bot_channels,
+            str(owner_user_id)
+        )
     except Exception as e:
         print("❌ refresh_bot_channels ERROR:", e)
         return []
@@ -427,7 +430,7 @@ async def report_to_channel_callback(callback: types.CallbackQuery):
     )
 
     try:
-        all_channels = get_all_account_channels()
+        all_channels = await asyncio.to_thread(get_all_account_channels)
 
         # Берём только session_name привязанные к выбранному каналу
         session_names = [
@@ -538,7 +541,8 @@ async def login_by_qr_callback(callback: types.CallbackQuery):
                 break
 
             if session_name:
-                link_account_to_channel(
+                await asyncio.to_thread(
+                    link_account_to_channel,
                     str(user_id),
                     session_name,
                     channel_id,
@@ -589,10 +593,14 @@ async def admin_chat(message: types.Message):
             try:
                 channel_id = str(message.chat.id)
                 channel_title = message.chat.title or channel_id
-                save_bot_channels("default", [{
-                    "channel_id": channel_id,
-                    "channel_title": channel_title,
-                }])
+                await asyncio.to_thread(
+                    save_bot_channels,
+                    "default",
+                    [{
+                        "channel_id": channel_id,
+                        "channel_title": channel_title,
+                    }]
+                )
                 await message.answer(
                     f"✅ Группа «{channel_title}» подключена.\n"
                     "Теперь можно привязывать Telegram-аккаунты."
@@ -665,7 +673,7 @@ async def admin_chat(message: types.Message):
         or "в канал отчет" in lower_text
         or "отчет в канал кинь" in lower_text
     ):
-        channels = get_bot_channels("default")
+        channels = await asyncio.to_thread(get_bot_channels, "default")
 
         if not channels:
             await message.answer("❌ Нет подключённых каналов. Напиши Claw в нужном канале/группе.")
@@ -821,7 +829,8 @@ async def admin_chat(message: types.Message):
                                 break
 
                         if session_name:
-                            link_account_to_channel(
+                            await asyncio.to_thread(
+                                link_account_to_channel,
                                 str(user_id),
                                 session_name,
                                 channel_id,
@@ -1123,10 +1132,14 @@ async def forwarded_channel_message(message: types.Message):
     owner_user_id = str(message.from_user.id)
 
     try:
-        save_bot_channels(owner_user_id, [{
-            "channel_id": channel_id,
-            "channel_title": channel_title,
-        }])
+        await asyncio.to_thread(
+            save_bot_channels,
+            owner_user_id,
+            [{
+                "channel_id": channel_id,
+                "channel_title": channel_title,
+            }]
+        )
         await message.answer(
             f"✅ Канал сохранён: {channel_title}\n"
             f"ID: {channel_id}\n\n"
@@ -1204,7 +1217,8 @@ async def timer_confirm(callback: types.CallbackQuery, state: FSMContext):
         return
 
     data = await state.get_data()
-    ok = set_timer_settings(
+    ok = await asyncio.to_thread(
+        set_timer_settings,
         channel_id=data["channel_id"],
         channel_title=data["channel_title"],
         day_hour=data["day_hour"],
@@ -1243,10 +1257,14 @@ async def group_message_handler(message: types.Message):
         channel_id = str(message.chat.id)
         channel_title = message.chat.title or channel_id
 
-        save_bot_channels("default", [{
-            "channel_id": channel_id,
-            "channel_title": channel_title,
-        }])
+        await asyncio.to_thread(
+            save_bot_channels,
+            "default",
+            [{
+                "channel_id": channel_id,
+                "channel_title": channel_title,
+            }]
+        )
 
         await bot.send_message(
             channel_id,
@@ -1266,7 +1284,7 @@ async def bot_removed_handler(update: types.ChatMemberUpdated):
         channel_title = update.chat.title or channel_id
 
         try:
-            remove_bot_channel(channel_id)
+            await asyncio.to_thread(remove_bot_channel, channel_id)
             print(f"🗑 Бот удалён из: {channel_title} ({channel_id}), канал убран из списка")
         except Exception as e:
             print(f"❌ remove_bot_channel ERROR: {e}")
@@ -1313,10 +1331,14 @@ async def channel_post_handler(message: types.Message):
         channel_title = message.chat.title or channel_id
         owner_user_id = "default"
 
-        save_bot_channels(owner_user_id, [{
-            "channel_id": channel_id,
-            "channel_title": channel_title,
-        }])
+        await asyncio.to_thread(
+            save_bot_channels,
+            owner_user_id,
+            [{
+                "channel_id": channel_id,
+                "channel_title": channel_title,
+            }]
+        )
 
         await bot.send_message(
             channel_id,
