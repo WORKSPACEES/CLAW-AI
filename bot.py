@@ -583,7 +583,7 @@ async def set_timer_start(message: types.Message, state: FSMContext):
         reply_markup=build_timer_channel_keyboard(channels)
     )
 
-@dp.message()
+@dp.message(StateFilter(None))
 async def admin_chat(message: types.Message):
     # Игнорируем сообщения из каналов и групп — только личка
     # Для групп — только команда Claw
@@ -1149,7 +1149,7 @@ async def forwarded_channel_message(message: types.Message):
         await message.answer(f"❌ Не смог сохранить канал: {e}")
 
 
-@dp.callback_query(lambda c: c.data.startswith("timer_pick_channel:"), StateFilter(TimerSetup.choosing_channel))
+@dp.callback_query(lambda c: c.data.startswith("timer_pick_channel:"))
 async def timer_channel_picked(callback: types.CallbackQuery, state: FSMContext):
     parts = callback.data.split(":", 2)
     channel_id = parts[1]
@@ -1206,7 +1206,7 @@ async def timer_night_time(message: types.Message, state: FSMContext):
     )
 
 
-@dp.callback_query(lambda c: c.data.startswith("timer_confirm:"), StateFilter(TimerSetup.confirming))
+@dp.callback_query(lambda c: c.data.startswith("timer_confirm:"))
 async def timer_confirm(callback: types.CallbackQuery, state: FSMContext):
     answer = callback.data.split(":")[1]
 
