@@ -107,8 +107,49 @@ def get_all_account_channels() -> list:
     )
     return result.data or []
 
-def remove_bot_channel(channel_id: str):
-    """Удаляет канал/группу из списка когда бота удаляют."""
-    supabase.table("report_channels").delete().eq(
-        "channel_id", str(channel_id)
-    ).eq("session_name", "__bot__").execute()
+def get_timer_settings(channel_id: str):
+    """Возвращает настройки таймера для канала или None если не заданы."""
+    try:
+        result = (
+            supabase.table("report_timer_settings")
+            .select("*")
+            .eq("channel_id", channel_id)
+            .execute()
+        )
+        if result.data:
+            return result.data[0]
+    except Exception as e:
+        print("⚠️ get_timer_settings ERROR:", e)
+    return None
+
+
+def set_timer_settings(channel_id: str, channel_title: str, day_hour: int, day_minute: int, night_hour: int, night_minute: int):
+    """Сохраняет настройки таймера для канала."""
+    try:
+        supabase.table("report_timer_settings").upsert({
+            "channel_id": channel_id,
+            "channel_title": channel_title,
+            "day_hour": day_hour,
+            "day_minute": day_minute,
+            "night_hour": night_hour,
+            "night_minute": night_minute,
+            "updated_at": "now()",
+        }, on_conflict="channel_id").execute()
+        return True
+    except Exception as e:
+        print("⚠️ set_timer_settings ERROR:", e)
+        return False
+
+
+def get_all_timer_settings():
+    """Возвращает настройки таймера для всех каналов."""
+    try:
+        result = (
+            supabase.table("report_timer_settings")
+            .select("*")
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        print("⚠️ get_all_timer_settings ERROR:", e)
+        return []
