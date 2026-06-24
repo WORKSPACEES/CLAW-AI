@@ -268,46 +268,57 @@ async def start_account(account):
 
 async def main():
     print("✅ multworker.py запущен", flush=True)
-    print("🔎 Загружаю Telegram-аккаунты из Supabase...", flush=True)
 
-    accounts = load_accounts()
+    # Словарь активных клиентов: session_name -> client
+    active_clients = {}
 
-    if not accounts:
-        print("❌ В Supabase нет active аккаунтов с session_string", flush=True)
-        print("⏳ Жду 60 секунд и проверю снова...", flush=True)
-        await asyncio.sleep(60)
-        return
+    async def launch_account(account):
+        session_name = account.get("session_name")
+        username = account.get("username") or account.get("phone") or session_name
 
-    print(f"🔎 Найдено аккаунтов: {len(accounts)}", flush=True)
-
-    clients = []
-
-    for account in accounts:
-        username = account.get("username") or account.get("phone") or account.get("session_name")
+        if session_name in active_clients:
+            return  # уже запущен
 
         try:
             print(f"🔌 Пробую запустить аккаунт: {username}", flush=True)
-
             client = await start_account(account)
 
             if client:
-                clients.append(client)
+                active_clients[session_name] = client
                 print(f"✅ Аккаунт добавлен в прослушку: {username}", flush=True)
+                # Запускаем клиент в фоне, не блокируя остальных
+                asyncio.create_task(client.run_until_disconnected())
             else:
-                print(f"⚠️ Аккаунт не вернул client: {username}", flush=True)
+                print(f"⚠️ Аккаунт не авторизован: {username}", flush=True)
 
         except Exception as e:
             print(f"❌ Не смог запустить аккаунт {username}: {e}", flush=True)
 
-    if not clients:
-        print("❌ Ни один аккаунт не запустился", flush=True)
-        return
+    async def cleanup_disconnected():
+        """Удаляем из active_clients тех, кто отключился."""
+        to_remove = []
+        for session_name, client in active_clients.items():
+            if not client.is_connected():
+                to_remove.append(session_name)
+        for s in to_remove:
+            print(f"🔌 Аккаунт отключился, убираю из списка: {s}", flush=True)
+            del active_clients[s]
 
-    print("✅ Все доступные аккаунты слушаются. Жду сообщения...", flush=True)
+    while True:
+        print("🔎 Проверяю аккаунты в Supabase...", flush=True)
+        accounts = load_accounts()
 
-    await asyncio.gather(
-        *[client.run_until_disconnected() for client in clients]
-    )
+        if not accounts:
+            print("❌ В Supabase нет active аккаунтов с session_string", flush=True)
+        else:
+            print(f"🔎 Найдено аккаунтов: {len(accounts)}", flush=True)
+            for account in accounts:
+                await launch_account(account)
+
+        await cleanup_disconnected()
+
+        print(f"✅ Активных клиентов: {len(active_clients)}", flush=True)
+        await asyncio.sleep(60)
 
 
 if __name__ == "__main__":
