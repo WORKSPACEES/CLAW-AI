@@ -1293,8 +1293,15 @@ async def bot_removed_handler(update: types.ChatMemberUpdated):
     "загрузи историю", "загрузить историю", "прочитай чаты", "читай историю"
 ))
 async def load_history_command(message: types.Message):
-    from multworker import load_accounts, start_account
-    await message.answer("⏳ Запускаю загрузку истории за текущую смену...")
+    from zoneinfo import ZoneInfo
+    from datetime import timezone as dt_timezone
+    from telethon.sessions import StringSession
+    from telethon import TelegramClient
+    from telethon.tl.types import User as TelethonUser
+
+    KYIV_TZ = ZoneInfo("Europe/Kyiv")
+
+    await message.answer("⏳ Загружаю историю за текущую смену по всем аккаунтам...")
 
     try:
         accounts = load_accounts()
@@ -1303,14 +1310,134 @@ async def load_history_command(message: types.Message):
             await message.answer("❌ Нет подключённых аккаунтов.")
             return
 
+        total_new = 0
+        total_skipped = 0
+
+        # Определяем начало текущей смены
+        now = datetime.now(KYIV_TZ)
+        day_start = now.replace(hour=9, minute=0, second=0, microsecond=0)
+        night_start = now.replace(hour=21, minute=0, second=0, microsecond=0)
+
+        if day_start <= now < night_start:
+            shift_start = day_start
+        elif now >= night_start:
+            shift_start = night_start
+        else:
+            from datetime import timedelta
+            shift_start = night_start - timedelta(days=1)
+
+        shift_start_utc = shift_start.astimezone(dt_timezone.utc)
+
         for account in accounts:
-            username = account.get("username") or account.get("phone")
-            await message.answer(f"🔄 Читаю историю: @{username}...")
-            client = await start_account(account)
-            if client:
+            session_string = account.get("session_string")
+            username = account.get("username") or account.get("phone") or account.get("session_name")
+
+            try:
+                await message.answer(f"🔄 Читаю чаты: @{username}...")
+
+                client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
+                await client.connect()
+
+                if not await client.is_user_authorized():
+                    await message.answer(f"⚠️ Аккаунт @{username} не авторизован, пропускаю.")
+                    await client.disconnect()
+                    continue
+
+                # Загружаем уже существующие сообщения из Supabase для этого аккаунта
+                # чтобы избежать дублей — индексируем по (dialog_id, message_date)
+                existing_result = await asyncio.to_thread(
+                    lambda: supabase.table("telegram_messages")
+                    .select("dialog_id, message_date")
+                    .eq("account_session_name", account.get("session_name"))
+                    .gte("message_date", shift_start_utc.isoformat())
+                    .execute()
+                )
+
+                existing_keys = set()
+                for row in (existing_result.data or []):
+                    d_id = str(row.get("dialog_id") or "")
+                    m_date = str(row.get("message_date") or "")
+                    if d_id and m_date:
+                        existing_keys.add((d_id, m_date[:19]))  # до секунд
+
+                new_count = 0
+                skip_count = 0
+
+                async for dialog in client.iter_dialogs(limit=150):
+                    try:
+                        entity = dialog.entity
+                        if not isinstance(entity, TelethonUser):
+                            continue
+                        if getattr(entity, "is_self", False):
+                            continue
+
+                        dialog_id = entity.id
+                        if str(dialog_id) in ("777000", "42777"):
+                            continue
+
+                        dialog_username = getattr(entity, "username", None) or str(dialog_id)
+                        first_name = getattr(entity, "first_name", "") or ""
+                        last_name = getattr(entity, "last_name", "") or ""
+                        dialog_name = f"{first_name} {last_name}".strip() or dialog_username
+
+                        async for msg in client.iter_messages(entity, limit=100):
+                            if not msg.date:
+                                continue
+
+                            msg_date_kyiv = msg.date.astimezone(KYIV_TZ)
+
+                            if msg_date_kyiv < shift_start:
+                                break
+
+                            if not msg.raw_text:
+                                continue
+
+                            # Проверяем дубль: (dialog_id, дата до секунд)
+                            msg_date_iso = msg.date.astimezone(dt_timezone.utc).isoformat()
+                            dedup_key = (str(dialog_id), msg_date_iso[:19])
+
+                            if dedup_key in existing_keys:
+                                skip_count += 1
+                                continue
+
+                            direction = "outgoing" if msg.out else "incoming"
+
+                            await save_message(
+                                account=account,
+                                dialog_id=dialog_id,
+                                dialog_username=dialog_username,
+                                dialog_name=dialog_name,
+                                direction=direction,
+                                text=msg.raw_text,
+                                message_date=msg.date,
+                            )
+
+                            existing_keys.add(dedup_key)
+                            new_count += 1
+
+                    except Exception as e:
+                        print(f"❌ Ошибка диалога [{username}]: {e}", flush=True)
+
                 await client.disconnect()
 
-        await message.answer("✅ История загружена. Теперь можешь запросить отчёт.")
+                total_new += new_count
+                total_skipped += skip_count
+
+                await message.answer(
+                    f"✅ @{username}: новых сообщений — {new_count}, "
+                    f"уже было — {skip_count}"
+                )
+
+            except Exception as e:
+                print(f"❌ LOAD HISTORY ACCOUNT ERROR [{username}]: {e}", flush=True)
+                await message.answer(f"❌ Ошибка аккаунта @{username}: {e}")
+
+        await message.answer(
+            f"✅ Загрузка завершена.\n\n"
+            f"📥 Новых сообщений записано: {total_new}\n"
+            f"⏭ Уже было в базе: {total_skipped}\n\n"
+            f"Теперь можешь запросить отчёт — все лиды учтены."
+        )
 
     except Exception as e:
         print("❌ LOAD HISTORY ERROR:", e)
