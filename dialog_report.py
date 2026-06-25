@@ -235,37 +235,37 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
     incoming_messages = result.data or []
 
     # ЖЁСТКИЙ ПОДСЧЁТ КАК В SUPABASE SQL
-stat_res = (
-    supabase.table("telegram_messages")
-    .select("dialog_id, chat_deleted")
-    .eq("account_session_name", account_session_name)
-    .eq("direction", "incoming")
-    .gte("message_date", start_iso)
-    .lt("message_date", end_iso)
-    .execute()
-)
+    stat_res = (
+        supabase.table("telegram_messages")
+        .select("dialog_id, chat_deleted")
+        .eq("account_session_name", account_session_name)
+        .eq("direction", "incoming")
+        .gte("message_date", start_iso)
+        .lt("message_date", end_iso)
+        .execute()
+    )
 
-stat_rows = stat_res.data or []
+    stat_rows = stat_res.data or []
 
-all_dialogs = set()
-deleted_dialogs = set()
-active_dialogs = set()
+    all_dialogs = set()
+    deleted_dialogs = set()
+    active_dialogs = set()
 
-for row in stat_rows:
-    dialog_id = str(row.get("dialog_id") or "")
-    if not dialog_id:
-        continue
+    for row in stat_rows:
+        dialog_id = str(row.get("dialog_id") or "")
+        if not dialog_id:
+            continue
 
-    all_dialogs.add(dialog_id)
+        all_dialogs.add(dialog_id)
 
-    if row.get("chat_deleted") is True:
-        deleted_dialogs.add(dialog_id)
-    else:
-        active_dialogs.add(dialog_id)
+        if row.get("chat_deleted") is True:
+            deleted_dialogs.add(dialog_id)
+        else:
+            active_dialogs.add(dialog_id)
 
-total_written = len(all_dialogs)
-deleted_chats = len(deleted_dialogs)
-remaining = len(active_dialogs)
+    total_written = len(all_dialogs)
+    deleted_chats = len(deleted_dialogs)
+    remaining = len(active_dialogs)
 
     def first_value(*keys, default="-"):
         for key in keys:
