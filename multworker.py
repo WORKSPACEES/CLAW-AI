@@ -225,57 +225,28 @@ async def start_account(account):
     async def message_handler(event):
         try:
             print("📩 NEW MESSAGE EVENT", flush=True)
-            print(
-                f"EVENT DEBUG [{username}]: "
-                f"chat_id={event.chat_id}, "
-                f"sender_id={event.sender_id}, "
-                f"is_private={event.is_private}, "
-                f"out={event.out}, "
-                f"text={(event.raw_text or '')[:80]}",
-                flush=True
-            )
 
-            if not event.raw_text:
-                print(f"⏭ Пустое сообщение [{username}], пропускаю", flush=True)
+            if event.is_private is not True:
+                print("⏭ Не личный чат, пропускаю", flush=True)
                 return
 
             chat = await event.get_chat()
 
-            from telethon.tl.types import User
+            dialog_id = getattr(chat, "id", event.chat_id)
 
-            # Нам нужны только личные диалоги с людьми.
-            # Не полагаемся только на event.is_private, проверяем сам chat/entity.
-            if not isinstance(chat, User):
-                print(
-                    f"⏭ Не личный User-чат [{username}], "
-                    f"type={type(chat).__name__}, chat_id={event.chat_id}",
-                    flush=True
-                )
-                return
-
-            if getattr(chat, "bot", False):
-                print(f"⏭ Бот-чат [{username}], пропускаю", flush=True)
-                return
-
-            dialog_id = str(getattr(chat, "id", event.chat_id))
-
-            if dialog_id in ("777000", "42777", "0"):
+            if str(dialog_id) in ("777000", "42777"):
                 print(f"⏭ Системное сообщение Telegram {dialog_id}, пропускаю", flush=True)
                 return
 
-            dialog_username = getattr(chat, "username", None) or dialog_id
+            dialog_username = getattr(chat, "username", None) or str(dialog_id)
 
             first_name = getattr(chat, "first_name", "") or ""
             last_name = getattr(chat, "last_name", "") or ""
-            dialog_name = f"{first_name} {last_name}".strip() or dialog_username
+            title = getattr(chat, "title", "") or ""
+
+            dialog_name = title or f"{first_name} {last_name}".strip() or dialog_username
 
             direction = "outgoing" if event.out else "incoming"
-
-            print(
-                f"💾 SAVE MESSAGE [{username}] "
-                f"{direction} @{dialog_username}: {(event.raw_text or '')[:80]}",
-                flush=True
-            )
 
             await save_message(
                 account=account,
@@ -288,62 +259,55 @@ async def start_account(account):
             )
 
         except Exception as e:
-            print(f"❌ MESSAGE HANDLER ERROR [{username}]: {repr(e)}", flush=True)
+            print(f"❌ MESSAGE HANDLER ERROR [{username}]: {e}", flush=True)
+
+    asyncio.create_task(check_deleted_chats(client, account))
+
+    return client
 
 
 async def main():
     print("✅ multworker.py запущен", flush=True)
+    print("🔎 Загружаю Telegram-аккаунты из Supabase...", flush=True)
 
-    # Словарь активных клиентов: session_name -> client
-    active_clients = {}
+    accounts = load_accounts()
 
-    async def launch_account(account):
-        session_name = account.get("session_name")
-        username = account.get("username") or account.get("phone") or session_name
+    if not accounts:
+        print("❌ В Supabase нет active аккаунтов с session_string", flush=True)
+        print("⏳ Жду 60 секунд и проверю снова...", flush=True)
+        await asyncio.sleep(60)
+        return
 
-        if session_name in active_clients:
-            return  # уже запущен
+    print(f"🔎 Найдено аккаунтов: {len(accounts)}", flush=True)
+
+    clients = []
+
+    for account in accounts:
+        username = account.get("username") or account.get("phone") or account.get("session_name")
 
         try:
             print(f"🔌 Пробую запустить аккаунт: {username}", flush=True)
+
             client = await start_account(account)
 
             if client:
-                active_clients[session_name] = client
+                clients.append(client)
                 print(f"✅ Аккаунт добавлен в прослушку: {username}", flush=True)
-                # Запускаем клиент в фоне, не блокируя остальных
-                asyncio.create_task(client.run_until_disconnected())
             else:
-                print(f"⚠️ Аккаунт не авторизован: {username}", flush=True)
+                print(f"⚠️ Аккаунт не вернул client: {username}", flush=True)
 
         except Exception as e:
             print(f"❌ Не смог запустить аккаунт {username}: {e}", flush=True)
 
-    async def cleanup_disconnected():
-        """Удаляем из active_clients тех, кто отключился."""
-        to_remove = []
-        for session_name, client in active_clients.items():
-            if not client.is_connected():
-                to_remove.append(session_name)
-        for s in to_remove:
-            print(f"🔌 Аккаунт отключился, убираю из списка: {s}", flush=True)
-            del active_clients[s]
+    if not clients:
+        print("❌ Ни один аккаунт не запустился", flush=True)
+        return
 
-    while True:
-        print("🔎 Проверяю аккаунты в Supabase...", flush=True)
-        accounts = load_accounts()
+    print("✅ Все доступные аккаунты слушаются. Жду сообщения...", flush=True)
 
-        if not accounts:
-            print("❌ В Supabase нет active аккаунтов с session_string", flush=True)
-        else:
-            print(f"🔎 Найдено аккаунтов: {len(accounts)}", flush=True)
-            for account in accounts:
-                await launch_account(account)
-
-        await cleanup_disconnected()
-
-        print(f"✅ Активных клиентов: {len(active_clients)}", flush=True)
-        await asyncio.sleep(60)
+    await asyncio.gather(
+        *[client.run_until_disconnected() for client in clients]
+    )
 
 
 if __name__ == "__main__":
