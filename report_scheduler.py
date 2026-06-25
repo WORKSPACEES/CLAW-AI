@@ -153,6 +153,14 @@ async def send_shift_report(report_time, target_channel_id=None):
                 reply_markup=report_keyboard(session_name, start_time=start_time, end_time=end_time)
             )
 
+            print(f"✅ Отчёт [{session_name}] → {target_chat}")
+
+        print("✅ Отчёты по аккаунтам отправлены")
+
+    except Exception as e:
+        print("❌ Ошибка отправки отчёта:", e)
+        await bot.send_message(REPORT_CHAT_ID, f"❌ Ошибка отчёта: {e}")
+
 
 async def main():
     print("✅ report_scheduler.py запущен")
