@@ -256,6 +256,13 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
 
     leads = {}
 
+        deleted_dialog_ids = set()
+        for msg in messages:
+            if msg.get("chat_deleted") is True:
+                d_id = str(msg.get("dialog_id") or msg.get("chat_id") or "")
+                if d_id:
+                    deleted_dialog_ids.add(d_id)
+
     for msg in messages:
         # Считаем только входящие
         if msg.get("direction") != "incoming":
@@ -312,7 +319,7 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
                 "chat_deleted": False,
             }
 
-        if msg.get("chat_deleted") is True:
+        if dialog_id in deleted_dialog_ids:
             leads[dialog_id]["chat_deleted"] = True
 
         if text:
