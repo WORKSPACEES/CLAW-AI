@@ -739,9 +739,10 @@ async def login_by_qr_callback(callback: types.CallbackQuery):
             accounts = list_accounts(user_id)
             session_name = None
 
-            for acc in accounts:
-                session_name = acc.get("session_name")
-                break
+            # Берём последний добавленный аккаунт
+            if accounts:
+                accounts_sorted = sorted(accounts, key=lambda x: x.get("id") or 0, reverse=True)
+                session_name = accounts_sorted[0].get("session_name")
 
             if session_name:
                 await asyncio.to_thread(
@@ -1034,10 +1035,16 @@ async def admin_chat(message: types.Message):
                         phone = state.get("phone", "")
                         session_name = None
 
+                        # Сначала ищем по телефону
                         for acc in accounts:
-                            if acc.get("phone", "").replace("+", "") in phone.replace("+", ""):
+                            if phone and acc.get("phone", "").replace("+", "") in phone.replace("+", ""):
                                 session_name = acc.get("session_name")
                                 break
+
+                        # Если не нашли по телефону (QR-вход) — берём последний добавленный аккаунт
+                        if not session_name and accounts:
+                            accounts_sorted = sorted(accounts, key=lambda x: x.get("id") or 0, reverse=True)
+                            session_name = accounts_sorted[0].get("session_name")
 
                         if session_name:
                             await asyncio.to_thread(
