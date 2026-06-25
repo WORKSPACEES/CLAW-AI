@@ -21,6 +21,7 @@ from telegram_connect import (
 )
 from dialog_report import build_report, build_reports_by_accounts
 from pathlib import Path
+from datetime import datetime
 import json
 import re
 
@@ -268,17 +269,113 @@ def extract_report_chat_query(text):
 
     return None
 
-def report_keyboard(session_name):
+def report_keyboard(session_name, start_time=None, end_time=None):
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    KYIV_TZ = ZoneInfo("Europe/Kyiv")
+
+    if start_time is None or end_time is None:
+        now = datetime.now(KYIV_TZ)
+        day_start = now.replace(hour=9, minute=0, second=0, microsecond=0)
+        night_start = now.replace(hour=21, minute=0, second=0, microsecond=0)
+
+        if day_start <= now < night_start:
+            start_time = day_start
+            end_time = night_start
+        elif now >= night_start:
+            start_time = night_start
+            end_time = day_start + timedelta(days=1)
+        else:
+            start_time = night_start - timedelta(days=1)
+            end_time = day_start
+
+    start_str = start_time.strftime("%Y%m%dT%H%M")
+    end_str = end_time.strftime("%Y%m%dT%H%M")
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="📖 Развёрнутый отчёт",
-                    callback_data=f"full_report_account:{session_name}"
+                    callback_data=f"full_report_account:{session_name}:{start_str}:{end_str}"
                 )
             ]
         ]
     )
+
+@dp.message(lambda m: (m.text or "").strip().lower() == "восстановить отчеты")
+async def restore_reports_command(message: types.Message):
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+    from supabase_db import get_all_account_channels
+
+    KYIV_TZ = ZoneInfo("Europe/Kyiv")
+
+    await message.answer("🔁 Начинаю восстановление отчётов за 7 дней...")
+
+    def get_all_shifts(days=7):
+        now = datetime.now(KYIV_TZ)
+        shifts = []
+        for i in range(days, -1, -1):
+            day = now - timedelta(days=i)
+            day_start = day.replace(hour=9, minute=0, second=0, microsecond=0)
+            day_end = day.replace(hour=21, minute=0, second=0, microsecond=0)
+            night_start = day.replace(hour=21, minute=0, second=0, microsecond=0)
+            night_end = (day + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+            if day_end <= now:
+                shifts.append(("Дневная смена", day_start, day_end))
+            if night_end <= now:
+                shifts.append(("Ночная смена", night_start, night_end))
+        return shifts
+
+    try:
+        shifts = get_all_shifts(days=7)
+        account_channels = {
+            row["session_name"]: row
+            for row in await asyncio.to_thread(get_all_account_channels)
+        }
+
+        sent_total = 0
+        empty_total = 0
+
+        for shift_name, start_time, end_time in shifts:
+            label = f"{shift_name} {start_time.strftime('%d.%m %H:%M')}—{end_time.strftime('%H:%M')}"
+
+            try:
+                reports = await asyncio.to_thread(
+                    build_reports_by_accounts,
+                    start_time, end_time, shift_name, False
+                )
+
+                if not reports:
+                    empty_total += 1
+                    continue
+
+                for report in reports:
+                    session_name = report["session_name"]
+                    channel = account_channels.get(session_name)
+                    target_chat = channel["channel_id"] if channel else REPORT_CHAT_ID
+
+                    await bot.send_message(
+                        target_chat,
+                        report["text"],
+                        reply_markup=report_keyboard(session_name, start_time=start_time, end_time=end_time)
+                    )
+                    sent_total += 1
+                    await asyncio.sleep(1)
+
+            except Exception as e:
+                await message.answer(f"❌ Ошибка смены {label}: {e}")
+
+        await message.answer(
+            f"✅ Восстановление завершено!\n\n"
+            f"📊 Отправлено отчётов: {sent_total}\n"
+            f"⏭ Пустых смен: {empty_total}"
+        )
+
+    except Exception as e:
+        await message.answer(f"❌ Ошибка восстановления: {e}")
 
 async def refresh_bot_channels(owner_user_id: int) -> list:
     """Читает из Supabase список каналов/групп где бот является админом."""
@@ -360,11 +457,41 @@ def twofa_keyboard(token):
 @dp.callback_query(lambda c: c.data.startswith("full_report_account:"))
 async def full_report_callback(callback: types.CallbackQuery):
     try:
-        session_name = callback.data.split(":", 1)[1]
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+
+        KYIV_TZ = ZoneInfo("Europe/Kyiv")
+
+        parts = callback.data.split(":")
+        session_name = parts[1]
+
+        # Если в кнопке закодировано время смены — используем его
+        if len(parts) >= 4:
+            start_time = datetime.strptime(parts[2], "%Y%m%dT%H%M").replace(tzinfo=KYIV_TZ)
+            end_time = datetime.strptime(parts[3], "%Y%m%dT%H%M").replace(tzinfo=KYIV_TZ)
+        else:
+            # Старые кнопки без времени — берём текущую смену
+            now = datetime.now(KYIV_TZ)
+            day_start = now.replace(hour=9, minute=0, second=0, microsecond=0)
+            night_start = now.replace(hour=21, minute=0, second=0, microsecond=0)
+
+            if day_start <= now < night_start:
+                start_time = day_start
+                end_time = night_start
+            elif now >= night_start:
+                start_time = night_start
+                end_time = day_start + timedelta(days=1)
+            else:
+                start_time = night_start - timedelta(days=1)
+                end_time = day_start
 
         await callback.answer("📩 Отправляю развёрнутый отчёт в личку")
 
-        reports = build_reports_by_accounts(detailed=True)
+        reports = build_reports_by_accounts(
+            start_time=start_time,
+            end_time=end_time,
+            detailed=True,
+        )
 
         needed_report = None
 
