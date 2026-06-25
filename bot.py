@@ -560,24 +560,18 @@ async def report_to_channel_callback(callback: types.CallbackQuery):
 
         reports = build_reports_by_accounts(detailed=False)
 
+        # Если есть привязки — фильтруем, иначе показываем все
         filtered = [
             r for r in reports
             if r["session_name"] in session_names
-        ]
+        ] if session_names else reports
 
         if not filtered:
             await bot.send_message(
                 chat_id=callback.from_user.id,
-                text="За этот период новых диалогов нет по этому каналу."
+                text="За этот период новых диалогов нет."
             )
             return
-
-        for report in filtered:
-            await bot.send_message(
-                chat_id=callback.from_user.id,
-                text=report["text"],
-                reply_markup=report_keyboard(report["session_name"])
-            )
 
 
     except Exception as e:
