@@ -90,6 +90,7 @@ def build_confirm_keyboard() -> InlineKeyboardMarkup:
     ])
 
 last_unknown_text = {}
+restore_channel_cache = {}
 login_state = {}
 
 ACCOUNT_META_FILE = Path("account_meta.json")
@@ -318,7 +319,7 @@ async def restore_reports_command(message: types.Message):
 
     await message.answer(
         "📢 В какой канал восстановить отчёты?",
-        reply_markup=build_restore_channel_keyboard(channels)
+        reply_markup=build_restore_channel_keyboard(user_id, channels)
     )
 
 
@@ -330,8 +331,10 @@ async def restore_to_channel_callback(callback: types.CallbackQuery):
 
     KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
-    parts = callback.data.split(":", 2)
-    channel_id = parts[1] if len(parts) > 1 else None
+    parts = callback.data.split(":")
+    user_id = parts[1]
+    idx = parts[2]
+    channel_id = restore_channel_cache.get(f"{user_id}_{idx}")
     channel_title = parts[2] if len(parts) > 2 else "Канал"
 
     await callback.answer()
@@ -439,15 +442,16 @@ def build_channel_keyboard(channels: list) -> InlineKeyboardMarkup:
     ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-def build_restore_channel_keyboard(channels: list) -> InlineKeyboardMarkup:
+def build_restore_channel_keyboard(user_id: int, channels: list) -> InlineKeyboardMarkup:
     buttons = []
     for i, ch in enumerate(channels):
         title = ch.get("channel_title") or ch.get("channel_id")
         cid = ch.get("channel_id")
+        restore_channel_cache[f"{user_id}_{i}"] = cid
         buttons.append([
             InlineKeyboardButton(
                 text=f"📢 {title}",
-                callback_data=f"restore_ch:{i}:{cid}"
+                callback_data=f"restore_ch:{user_id}:{i}"
             )
         ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
