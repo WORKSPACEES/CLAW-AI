@@ -319,7 +319,7 @@ async def restore_reports_command(message: types.Message):
 
     await message.answer(
         "📢 В какой канал восстановить отчёты?",
-        reply_markup=build_restore_channel_keyboard(user_id, channels)
+        reply_markup=build_restore_channel_keyboard(channels)
     )
 
 
@@ -332,9 +332,8 @@ async def restore_to_channel_callback(callback: types.CallbackQuery):
     KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
     parts = callback.data.split(":")
-    user_id = parts[1]
-    idx = parts[2]
-    channel_id = restore_channel_cache.get(f"{user_id}_{idx}")
+    short_cid = parts[1] if len(parts) > 1 else None
+    channel_id = f"-100{short_cid}" if short_cid else None
     channel_title = parts[2] if len(parts) > 2 else "Канал"
 
     await callback.answer()
@@ -442,16 +441,17 @@ def build_channel_keyboard(channels: list) -> InlineKeyboardMarkup:
     ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-def build_restore_channel_keyboard(user_id: int, channels: list) -> InlineKeyboardMarkup:
+def build_restore_channel_keyboard(channels: list) -> InlineKeyboardMarkup:
     buttons = []
-    for i, ch in enumerate(channels):
+    for ch in channels:
         title = ch.get("channel_title") or ch.get("channel_id")
-        cid = ch.get("channel_id")
-        restore_channel_cache[f"{user_id}_{i}"] = cid
+        cid = str(ch.get("channel_id") or "")
+        # Обрезаем channel_id до последних 10 цифр чтобы влезть в 64 байта
+        short_cid = cid.replace("-100", "")
         buttons.append([
             InlineKeyboardButton(
                 text=f"📢 {title}",
-                callback_data=f"restore_ch:{user_id}:{i}"
+                callback_data=f"restore_ch:{short_cid}"
             )
         ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
