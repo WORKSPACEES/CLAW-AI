@@ -620,7 +620,12 @@ async def admin_chat(message: types.Message):
         return
 
     user_id = message.from_user.id
-    lower_text = text.lower()
+    lower_text = text.lower().strip()
+
+    # 0.0 Загрузка истории
+    if lower_text in ("загрузи историю", "загрузить историю", "прочитай чаты", "читай историю"):
+        await load_history_command(message)
+        return
 
     # 0. Удаление Telegram-сессии по номеру
     if (
