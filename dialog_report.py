@@ -334,19 +334,19 @@ def build_reports_by_accounts(start_time=None, end_time=None, shift_name=None, d
         end_time = period["end_time"]
         shift_name = period["shift_name"]
 
-    # Загружаем только активные аккаунты
-    active_result = supabase.table("telegram_accounts").select("session_name").eq("status", "active").eq("active", True).execute()
-    active_sessions = set(row["session_name"] for row in (active_result.data or []) if row.get("session_name"))
-
+    # ВАЖНО: отчёт строим от реальных сообщений в telegram_messages.
+    # Раньше тут был жёсткий фильтр по active_sessions из telegram_accounts.
+    # Из-за него отчёт становился пустым, если telegram_accounts/report_channels
+    # не были синхронизированы с telegram_messages.account_session_name.
     messages = load_messages(start_time=start_time, end_time=end_time)
     accounts = group_by_account(messages)
 
     reports = []
 
     for account_session_name, account_messages in accounts.items():
-        # Пропускаем удалённые/неактивные аккаунты
-        if account_session_name not in active_sessions:
+        if not account_session_name or account_session_name == "unknown":
             continue
+
         text = build_account_report_text(
             account_session_name=account_session_name,
             messages=account_messages,
