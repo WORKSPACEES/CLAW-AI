@@ -306,13 +306,39 @@ def report_keyboard(session_name, start_time=None, end_time=None):
 
 @dp.message(lambda m: (m.text or "").strip().lower() == "восстановить отчеты")
 async def restore_reports_command(message: types.Message):
+    user_id = message.from_user.id
+    channels = await refresh_bot_channels(user_id)
+
+    if not channels:
+        await message.answer(
+            "⚠️ Нет каналов где я являюсь админом.\n"
+            "Добавь меня как админа в нужный канал и попробуй снова."
+        )
+        return
+
+    await message.answer(
+        "📢 В какой канал восстановить отчёты?",
+        reply_markup=build_restore_channel_keyboard(channels)
+    )
+
+
+@dp.callback_query(lambda c: c.data.startswith("restore_to_channel:"))
+async def restore_to_channel_callback(callback: types.CallbackQuery):
     from datetime import timedelta
     from zoneinfo import ZoneInfo
     from supabase_db import get_all_account_channels
 
     KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
-    await message.answer("🔁 Начинаю восстановление отчётов за 7 дней...")
+    parts = callback.data.split(":", 2)
+    channel_id = parts[1] if len(parts) > 1 else None
+    channel_title = parts[2] if len(parts) > 2 else "Канал"
+
+    await callback.answer()
+    await bot.send_message(
+        chat_id=callback.from_user.id,
+        text=f"🔁 Начинаю восстановление отчётов за 7 дней в «{channel_title}»..."
+    )
 
     def get_all_shifts(days=7):
         now = datetime.now(KYIV_TZ)
@@ -331,11 +357,6 @@ async def restore_reports_command(message: types.Message):
 
     try:
         shifts = get_all_shifts(days=7)
-        account_channels = {
-            row["session_name"]: row
-            for row in await asyncio.to_thread(get_all_account_channels)
-        }
-
         sent_total = 0
         empty_total = 0
 
@@ -353,29 +374,38 @@ async def restore_reports_command(message: types.Message):
                     continue
 
                 for report in reports:
-                    session_name = report["session_name"]
-                    channel = account_channels.get(session_name)
-                    target_chat = channel["channel_id"] if channel else REPORT_CHAT_ID
-
                     await bot.send_message(
-                        target_chat,
+                        channel_id,
                         report["text"],
-                        reply_markup=report_keyboard(session_name, start_time=start_time, end_time=end_time)
+                        reply_markup=report_keyboard(
+                            report["session_name"],
+                            start_time=start_time,
+                            end_time=end_time
+                        )
                     )
                     sent_total += 1
                     await asyncio.sleep(1)
 
             except Exception as e:
-                await message.answer(f"❌ Ошибка смены {label}: {e}")
+                await bot.send_message(
+                    chat_id=callback.from_user.id,
+                    text=f"❌ Ошибка смены {label}: {e}"
+                )
 
-        await message.answer(
-            f"✅ Восстановление завершено!\n\n"
-            f"📊 Отправлено отчётов: {sent_total}\n"
-            f"⏭ Пустых смен: {empty_total}"
+        await bot.send_message(
+            chat_id=callback.from_user.id,
+            text=(
+                f"✅ Восстановление завершено!\n\n"
+                f"📊 Отправлено отчётов: {sent_total}\n"
+                f"⏭ Пустых смен: {empty_total}"
+            )
         )
 
     except Exception as e:
-        await message.answer(f"❌ Ошибка восстановления: {e}")
+        await bot.send_message(
+            chat_id=callback.from_user.id,
+            text=f"❌ Ошибка восстановления: {e}"
+        )
 
 async def refresh_bot_channels(owner_user_id: int) -> list:
     """Читает из Supabase список каналов/групп где бот является админом."""
@@ -407,6 +437,19 @@ def build_channel_keyboard(channels: list) -> InlineKeyboardMarkup:
             callback_data="pick_channel:skip:Без канала"
         )
     ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def build_restore_channel_keyboard(channels: list) -> InlineKeyboardMarkup:
+    buttons = []
+    for ch in channels:
+        title = ch.get("channel_title") or ch.get("channel_id")
+        cid = ch.get("channel_id")
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📢 {title}",
+                callback_data=f"restore_to_channel:{cid}:{title[:30]}"
+            )
+        ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def build_report_channel_keyboard(channels: list) -> InlineKeyboardMarkup:
