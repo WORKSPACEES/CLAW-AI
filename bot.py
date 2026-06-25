@@ -18,6 +18,8 @@ from telegram_connect import (
     delete_account_by_phone,
     start_qr_login,
     wait_qr_login,
+    API_ID,
+    API_HASH,
 )
 from dialog_report import build_report, build_reports_by_accounts
 from pathlib import Path
@@ -572,6 +574,20 @@ async def report_to_channel_callback(callback: types.CallbackQuery):
                 text="За этот период новых диалогов нет."
             )
             return
+
+        for report in filtered:
+            await bot.send_message(
+                chat_id=callback.from_user.id,
+                text=report["text"],
+                reply_markup=report_keyboard(report["session_name"])
+            )
+            await asyncio.sleep(0.3)
+
+        await bot.send_message(
+            chat_id=callback.from_user.id,
+            text=f"✅ Отчёт по «{channel_title}» готов."
+        )
+        return
 
 
     except Exception as e:
@@ -1439,13 +1455,14 @@ async def load_history_command(message: types.Message):
     from telethon.sessions import StringSession
     from telethon import TelegramClient
     from telethon.tl.types import User as TelethonUser
+    from supabase_db import supabase
 
     KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
     await message.answer("⏳ Загружаю историю за текущую смену по всем аккаунтам...")
 
     try:
-        accounts = load_accounts()
+        accounts = list_accounts(message.from_user.id)
 
         if not accounts:
             await message.answer("❌ Нет подключённых аккаунтов.")
@@ -1543,14 +1560,17 @@ async def load_history_command(message: types.Message):
 
                             direction = "outgoing" if msg.out else "incoming"
 
-                            await save_message(
-                                account=account,
-                                dialog_id=dialog_id,
-                                dialog_username=dialog_username,
-                                dialog_name=dialog_name,
-                                direction=direction,
-                                text=msg.raw_text,
-                                message_date=msg.date,
+                            await asyncio.to_thread(
+                                lambda: supabase.table("telegram_messages").insert({
+                                    "account_session_name": account.get("session_name"),
+                                    "account_username": account.get("username") or account.get("phone"),
+                                    "dialog_id": str(dialog_id),
+                                    "dialog_username": dialog_username,
+                                    "dialog_name": dialog_name,
+                                    "direction": direction,
+                                    "text": msg.raw_text,
+                                    "message_date": msg_date_iso,
+                                }).execute()
                             )
 
                             existing_keys.add(dedup_key)
