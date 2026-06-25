@@ -334,10 +334,6 @@ def build_reports_by_accounts(start_time=None, end_time=None, shift_name=None, d
         end_time = period["end_time"]
         shift_name = period["shift_name"]
 
-    # ВАЖНО: отчёт строим от реальных сообщений в telegram_messages.
-    # Раньше тут был жёсткий фильтр по active_sessions из telegram_accounts.
-    # Из-за него отчёт становился пустым, если telegram_accounts/report_channels
-    # не были синхронизированы с telegram_messages.account_session_name.
     messages = load_messages(start_time=start_time, end_time=end_time)
     accounts = group_by_account(messages)
 
