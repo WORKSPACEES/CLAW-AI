@@ -763,6 +763,14 @@ async def login_by_qr_callback(callback: types.CallbackQuery):
     )
     return
 
+@dp.message(lambda m: (m.text or "").strip().lower() == "тест канал")
+async def test_channel(message: types.Message):
+    try:
+        await bot.send_message(-1004317807244, "тест")
+        await message.answer("✅ Отправил")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
 @dp.message(lambda m: (m.text or "").strip().lower() == "установить таймер")
 async def set_timer_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
