@@ -24,8 +24,9 @@ def parse_dt(value):
 
 
 def load_messages(start_time, end_time):
-    start_iso = start_time.astimezone(KYIV_TZ).isoformat()
-    end_iso = end_time.astimezone(KYIV_TZ).isoformat()
+    from datetime import timezone
+    start_iso = start_time.astimezone(timezone.utc).isoformat()
+    end_iso = end_time.astimezone(timezone.utc).isoformat()
 
     result = (
         supabase.table("telegram_messages")
