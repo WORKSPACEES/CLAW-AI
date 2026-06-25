@@ -340,7 +340,7 @@ async def restore_to_channel_callback(callback: types.CallbackQuery):
     await callback.answer()
     await bot.send_message(
         chat_id=callback.from_user.id,
-        text=f"🔁 Начинаю восстановление отчётов за 7 дней в «{channel_title}»..."
+        text=f"🔁 Начинаю восстановление отчётов за 7 дней...\n\nChannel ID: {channel_id}"
     )
 
     def get_all_shifts(days=7):
