@@ -221,32 +221,61 @@ async def start_account(account):
 
     print(f"✅ Загружено исторических сообщений: {loaded}", flush=True)
 
-    @client.on(events.NewMessage())
+        @client.on(events.NewMessage())
     async def message_handler(event):
         try:
             print("📩 NEW MESSAGE EVENT", flush=True)
+            print(
+                f"EVENT DEBUG [{username}]: "
+                f"chat_id={event.chat_id}, "
+                f"sender_id={event.sender_id}, "
+                f"is_private={event.is_private}, "
+                f"out={event.out}, "
+                f"text={(event.raw_text or '')[:80]}",
+                flush=True
+            )
 
-            if event.is_private is not True:
-                print("⏭ Не личный чат, пропускаю", flush=True)
+            if not event.raw_text:
+                print(f"⏭ Пустое сообщение [{username}], пропускаю", flush=True)
                 return
 
             chat = await event.get_chat()
 
-            dialog_id = getattr(chat, "id", event.chat_id)
+            from telethon.tl.types import User
 
-            if str(dialog_id) in ("777000", "42777"):
+            # Нам нужны только личные диалоги с людьми.
+            # Не полагаемся только на event.is_private, проверяем сам chat/entity.
+            if not isinstance(chat, User):
+                print(
+                    f"⏭ Не личный User-чат [{username}], "
+                    f"type={type(chat).__name__}, chat_id={event.chat_id}",
+                    flush=True
+                )
+                return
+
+            if getattr(chat, "bot", False):
+                print(f"⏭ Бот-чат [{username}], пропускаю", flush=True)
+                return
+
+            dialog_id = str(getattr(chat, "id", event.chat_id))
+
+            if dialog_id in ("777000", "42777", "0"):
                 print(f"⏭ Системное сообщение Telegram {dialog_id}, пропускаю", flush=True)
                 return
 
-            dialog_username = getattr(chat, "username", None) or str(dialog_id)
+            dialog_username = getattr(chat, "username", None) or dialog_id
 
             first_name = getattr(chat, "first_name", "") or ""
             last_name = getattr(chat, "last_name", "") or ""
-            title = getattr(chat, "title", "") or ""
-
-            dialog_name = title or f"{first_name} {last_name}".strip() or dialog_username
+            dialog_name = f"{first_name} {last_name}".strip() or dialog_username
 
             direction = "outgoing" if event.out else "incoming"
+
+            print(
+                f"💾 SAVE MESSAGE [{username}] "
+                f"{direction} @{dialog_username}: {(event.raw_text or '')[:80]}",
+                flush=True
+            )
 
             await save_message(
                 account=account,
@@ -259,11 +288,7 @@ async def start_account(account):
             )
 
         except Exception as e:
-            print(f"❌ MESSAGE HANDLER ERROR [{username}]: {e}", flush=True)
-
-    asyncio.create_task(check_deleted_chats(client, account))
-
-    return client
+            print(f"❌ MESSAGE HANDLER ERROR [{username}]: {repr(e)}", flush=True)
 
 
 async def main():
