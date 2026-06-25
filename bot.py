@@ -1011,8 +1011,8 @@ async def admin_chat(message: types.Message):
                 channel_title = state.get("report_channel_title") or "Без канала"
 
                 if channel_id:
-                accounts = list_accounts(user_id)
-                session_name = None
+                    accounts = list_accounts(user_id)
+                    session_name = None
 
                     if accounts:
                         accounts_sorted = sorted(accounts, key=lambda x: x.get("id") or 0, reverse=True)
