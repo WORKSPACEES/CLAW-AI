@@ -1413,14 +1413,17 @@ async def load_history_command(message: types.Message):
 
                             direction = "outgoing" if msg.out else "incoming"
 
-                            await save_message(
-                                account=account,
-                                dialog_id=dialog_id,
-                                dialog_username=dialog_username,
-                                dialog_name=dialog_name,
-                                direction=direction,
-                                text=msg.raw_text,
-                                message_date=msg.date,
+                            await asyncio.to_thread(
+                                lambda: supabase.table("telegram_messages").insert({
+                                    "account_session_name": account.get("session_name"),
+                                    "account_username": account.get("username") or account.get("phone"),
+                                    "dialog_id": str(dialog_id),
+                                    "dialog_username": dialog_username,
+                                    "dialog_name": dialog_name,
+                                    "direction": direction,
+                                    "text": msg.raw_text,
+                                    "message_date": msg.date.astimezone(dt_timezone.utc).isoformat(),
+                                }).execute()
                             )
 
                             existing_keys.add(dedup_key)
