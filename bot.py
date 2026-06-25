@@ -771,10 +771,13 @@ async def report_to_channel_callback(callback: types.CallbackQuery):
         # 1. Берём привязки канала
         all_channels = await asyncio.to_thread(get_all_account_channels)
 
+        def _norm(cid):
+            return str(cid or "").replace("-100", "").lstrip("-")
+
         linked_session_names = [
             row["session_name"]
             for row in all_channels
-            if str(row.get("channel_id")) == str(channel_id)
+            if _norm(row.get("channel_id")) == _norm(channel_id)
             and row.get("session_name")
             and row.get("session_name") != "__bot__"
         ]
