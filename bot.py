@@ -330,90 +330,6 @@ async def restore_reports_command(message: types.Message):
     )
 
 
-@dp.callback_query(lambda c: c.data.startswith("restore_ch:"))
-async def restore_to_channel_callback(callback: types.CallbackQuery):
-    from datetime import timedelta
-    from zoneinfo import ZoneInfo
-
-    KYIV_TZ = ZoneInfo("Europe/Kyiv")
-
-    parts = callback.data.split(":")
-    short_cid = parts[1] if len(parts) > 1 else None
-    channel_id = f"-100{short_cid}" if short_cid else None
-
-    await callback.answer()
-    await bot.send_message(
-        chat_id=callback.from_user.id,
-        text=f"🔁 Начинаю восстановление отчётов за 7 дней...\n\nChannel ID: {channel_id}"
-    )
-
-    def get_all_shifts(days=7):
-        now = datetime.now(KYIV_TZ)
-        shifts = []
-        for i in range(days, -1, -1):
-            day = now - timedelta(days=i)
-            day_start = day.replace(hour=9, minute=0, second=0, microsecond=0)
-            day_end = day.replace(hour=21, minute=0, second=0, microsecond=0)
-            night_start = day.replace(hour=21, minute=0, second=0, microsecond=0)
-            night_end = (day + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
-            if day_end <= now:
-                shifts.append(("Дневная смена", day_start, day_end))
-            if night_end <= now:
-                shifts.append(("Ночная смена", night_start, night_end))
-        return shifts
-
-    try:
-        shifts = get_all_shifts(days=7)
-        sent_total = 0
-        empty_total = 0
-
-        for shift_name, start_time, end_time in shifts:
-            label = f"{shift_name} {start_time.strftime('%d.%m %H:%M')}—{end_time.strftime('%H:%M')}"
-
-            try:
-                reports = await asyncio.to_thread(
-                    build_reports_by_accounts,
-                    start_time, end_time, shift_name, False
-                )
-
-                if not reports:
-                    empty_total += 1
-                    continue
-
-                for report in reports:
-                    await bot.send_message(
-                        channel_id,
-                        report["text"],
-                        reply_markup=report_keyboard(
-                            report["session_name"],
-                            start_time=start_time,
-                            end_time=end_time
-                        )
-                    )
-                    sent_total += 1
-                    await asyncio.sleep(1)
-
-            except Exception as e:
-                await bot.send_message(
-                    chat_id=callback.from_user.id,
-                    text=f"❌ Ошибка смены {label}: {e}"
-                )
-
-        await bot.send_message(
-            chat_id=callback.from_user.id,
-            text=(
-                f"✅ Восстановление завершено!\n\n"
-                f"📊 Отправлено отчётов: {sent_total}\n"
-                f"⏭ Пустых смен: {empty_total}"
-            )
-        )
-
-    except Exception as e:
-        await bot.send_message(
-            chat_id=callback.from_user.id,
-            text=f"❌ Ошибка восстановления: {e}"
-        )
-
 async def refresh_bot_channels(owner_user_id: int) -> list:
     """Читает из Supabase список каналов/групп где бот является админом."""
     try:
@@ -1091,10 +1007,31 @@ async def admin_chat(message: types.Message):
             result = await confirm_2fa(user_id, password)
 
             if result.get("ok"):
+                channel_id = state.get("report_channel_id")
+                channel_title = state.get("report_channel_title") or "Без канала"
+
+                if channel_id:
+                accounts = list_accounts(user_id)
+                session_name = None
+
+                    if accounts:
+                        accounts_sorted = sorted(accounts, key=lambda x: x.get("id") or 0, reverse=True)
+                        session_name = accounts_sorted[0].get("session_name")
+
+                    if session_name:
+                        await asyncio.to_thread(
+                            link_account_to_channel,
+                            str(user_id),
+                            session_name,
+                            channel_id,
+                            channel_title,
+                        )
+
                 if user_id in login_state:
                     del login_state[user_id]
 
-                await message.answer(result["message"])
+                channel_msg = f"\n📢 Отчёты будут в: {channel_title}" if channel_id else ""
+                await message.answer(result["message"] + channel_msg)
                 return
 
             if result.get("wrong_password"):
