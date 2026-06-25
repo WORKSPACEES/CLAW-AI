@@ -91,6 +91,7 @@ def build_confirm_keyboard() -> InlineKeyboardMarkup:
 
 last_unknown_text = {}
 restore_channel_cache = {}
+report_keyboard_cache = {}
 login_state = {}
 
 ACCOUNT_META_FILE = Path("account_meta.json")
@@ -291,15 +292,21 @@ def report_keyboard(session_name, start_time=None, end_time=None):
             start_time = night_start - timedelta(days=1)
             end_time = day_start
 
-    start_str = start_time.strftime("%Y%m%dT%H%M")
-    end_str = end_time.strftime("%Y%m%dT%H%M")
+    # Сохраняем в кэш, в кнопку кладём только короткий ключ
+    import hashlib
+    key = hashlib.md5(f"{session_name}{start_time}{end_time}".encode()).hexdigest()[:8]
+    report_keyboard_cache[key] = {
+        "session_name": session_name,
+        "start_time": start_time,
+        "end_time": end_time,
+    }
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="📖 Развёрнутый отчёт",
-                    callback_data=f"full_report_account:{session_name}:{start_str}:{end_str}"
+                    callback_data=f"fr:{key}"
                 )
             ]
         ]
