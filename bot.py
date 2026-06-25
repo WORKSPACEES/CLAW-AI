@@ -589,6 +589,20 @@ async def report_to_channel_callback(callback: types.CallbackQuery):
         )
         return
 
+        for report in filtered:
+            await bot.send_message(
+                chat_id=callback.from_user.id,
+                text=report["text"],
+                reply_markup=report_keyboard(report["session_name"])
+            )
+            await asyncio.sleep(0.3)
+
+        await bot.send_message(
+            chat_id=callback.from_user.id,
+            text=f"✅ Отчёт по «{channel_title}» готов."
+        )
+        return
+
 
     except Exception as e:
         print("REPORT TO CHANNEL CALLBACK ERROR:", e)
