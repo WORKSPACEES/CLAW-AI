@@ -1304,6 +1304,7 @@ async def load_history_command(message: types.Message):
     from telethon import TelegramClient
     from telethon.tl.types import User as TelethonUser
 
+    from supabase_db import supabase
     KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
     await message.answer("⏳ Загружаю историю за текущую смену по всем аккаунтам...")
