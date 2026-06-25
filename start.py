@@ -214,12 +214,34 @@ async def twofa_api(request):
         owner_user_id, result = await confirm_2fa_by_token(token, password)
 
         if owner_user_id and result.get("ok"):
+            state = login_state.get(owner_user_id, {})
+            channel_id = state.get("report_channel_id")
+            channel_title = state.get("report_channel_title") or "Без канала"
+
+            if channel_id:
+                from telegram_connect import list_accounts
+                from supabase_db import link_account_to_channel
+                accounts = list_accounts(owner_user_id)
+
+                if accounts:
+                    accounts_sorted = sorted(accounts, key=lambda x: x.get("id") or 0, reverse=True)
+                    session_name = accounts_sorted[0].get("session_name")
+
+                    if session_name:
+                        link_account_to_channel(
+                            str(owner_user_id),
+                            session_name,
+                            channel_id,
+                            channel_title,
+                        )
+
             if owner_user_id in login_state:
                 del login_state[owner_user_id]
 
+            channel_msg = f"\n📢 Отчёты будут в: {channel_title}" if channel_id else ""
             await bot.send_message(
                 chat_id=owner_user_id,
-                text=result["message"]
+                text=result["message"] + channel_msg
             )
 
         return web.json_response(result)
