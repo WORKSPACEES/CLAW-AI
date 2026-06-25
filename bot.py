@@ -23,7 +23,7 @@ from telegram_connect import (
 )
 from dialog_report import build_report, build_reports_by_accounts
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
 import re
 
@@ -32,6 +32,7 @@ from ai import analyze_messages_with_groq, chat_with_groq
 from command_memory import detect_command_by_memory, auto_learn_from_previous
 from image_ai import build_image_url
 from supabase_db import (
+    supabase,
     save_bot_channels,
     get_bot_channels,
     link_account_to_channel,
@@ -510,6 +511,7 @@ async def restore_to_channel_callback(callback: types.CallbackQuery):
             chat_id=callback.from_user.id,
             text=f"❌ Ошибка восстановления: {e}"
         )
+        
 @dp.callback_query(lambda c: c.data.startswith("pick_channel:"))
 async def pick_channel_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -538,6 +540,177 @@ async def pick_channel_callback(callback: types.CallbackQuery):
         text=f"✅ Канал выбран: {channel_title}\n\nКакая реклама?"
     )
 
+def get_current_report_shift():
+    from zoneinfo import ZoneInfo
+
+    KYIV_TZ = ZoneInfo("Europe/Kyiv")
+    now = datetime.now(KYIV_TZ)
+
+    day_start = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    day_end = now.replace(hour=21, minute=0, second=0, microsecond=0)
+
+    # Дневная смена: сегодня 09:00 — сегодня 21:00
+    if day_start <= now < day_end:
+        return day_start, day_end, "Дневная смена"
+
+    # Ночная смена: сегодня 21:00 — завтра 09:00
+    if now >= day_end:
+        night_start = day_end
+        night_end = (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+        return night_start, night_end, "Ночная смена"
+
+    # Ночная смена: вчера 21:00 — сегодня 09:00
+    night_start = (now - timedelta(days=1)).replace(hour=21, minute=0, second=0, microsecond=0)
+    night_end = day_start
+    return night_start, night_end, "Ночная смена"
+
+
+async def sync_history_for_accounts(accounts, start_time, end_time, progress_chat_id=None):
+    from telethon import TelegramClient
+    from telethon.sessions import StringSession
+    from telethon.tl.types import User as TelethonUser
+
+    total_new = 0
+    total_skipped = 0
+
+    start_utc = start_time.astimezone(timezone.utc)
+    end_utc = end_time.astimezone(timezone.utc)
+
+    for account in accounts:
+        session_name = account.get("session_name")
+        session_string = account.get("session_string")
+        account_username = account.get("username") or account.get("phone") or session_name
+
+        if not session_name or not session_string:
+            continue
+
+        client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
+
+        try:
+            await client.connect()
+
+            if not await client.is_user_authorized():
+                print(f"⚠️ SESSION NOT AUTHORIZED: {session_name}", flush=True)
+                continue
+
+            me = await client.get_me()
+
+            existing_result = await asyncio.to_thread(
+                lambda: supabase.table("telegram_messages")
+                .select("dialog_id, message_date")
+                .eq("account_session_name", session_name)
+                .gte("message_date", start_utc.isoformat())
+                .lt("message_date", end_utc.isoformat())
+                .execute()
+            )
+
+            existing_keys = set()
+
+            for row in (existing_result.data or []):
+                dialog_id_existing = str(row.get("dialog_id") or "")
+                message_date_existing = str(row.get("message_date") or "")
+
+                if dialog_id_existing and message_date_existing:
+                    existing_keys.add((dialog_id_existing, message_date_existing))
+
+            account_new = 0
+            account_skipped = 0
+
+            async for dialog in client.iter_dialogs():
+                entity = dialog.entity
+
+                # Берём только личные диалоги с людьми
+                if not isinstance(entity, TelethonUser):
+                    continue
+
+                # Ботов не считаем
+                if getattr(entity, "bot", False):
+                    continue
+
+                dialog_id = str(entity.id)
+                dialog_username = entity.username or str(entity.id)
+
+                dialog_name = (
+                    " ".join(
+                        x for x in [
+                            getattr(entity, "first_name", None),
+                            getattr(entity, "last_name", None),
+                        ]
+                        if x
+                    )
+                    or dialog_username
+                )
+
+                async for msg in client.iter_messages(entity, offset_date=end_utc):
+                    if not msg.date:
+                        continue
+
+                    msg_date = msg.date
+
+                    if msg_date.tzinfo is None:
+                        msg_date = msg_date.replace(tzinfo=timezone.utc)
+
+                    # Если дошли до сообщений раньше начала смены — дальше этот чат не читаем
+                    if msg_date < start_utc:
+                        break
+
+                    # Если сообщение позже конца смены — пропускаем
+                    if msg_date >= end_utc:
+                        continue
+
+                    # Пустые сообщения не пишем
+                    if not msg.raw_text:
+                        continue
+
+                    msg_date_iso = msg_date.isoformat()
+                    key = (dialog_id, msg_date_iso)
+
+                    if key in existing_keys:
+                        account_skipped += 1
+                        continue
+
+                    direction = "outgoing" if msg.sender_id == me.id else "incoming"
+
+                    await asyncio.to_thread(
+                        lambda: supabase.table("telegram_messages").insert({
+                            "account_session_name": session_name,
+                            "account_username": account_username,
+                            "dialog_id": dialog_id,
+                            "dialog_username": dialog_username,
+                            "dialog_name": dialog_name,
+                            "direction": direction,
+                            "text": msg.raw_text,
+                            "message_date": msg_date_iso,
+                            "chat_deleted": False,
+                        }).execute()
+                    )
+
+                    existing_keys.add(key)
+                    account_new += 1
+
+            total_new += account_new
+            total_skipped += account_skipped
+
+            print(
+                f"✅ SYNC DONE [{session_name} / @{account_username}]: "
+                f"new={account_new}, skipped={account_skipped}",
+                flush=True
+            )
+
+        except Exception as e:
+            print(f"❌ SYNC HISTORY ERROR [{session_name}]: {e}", flush=True)
+
+        finally:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+
+    return {
+        "new": total_new,
+        "skipped": total_skipped,
+    }
+
 @dp.callback_query(lambda c: c.data.startswith("report_to_channel:"))
 async def report_to_channel_callback(callback: types.CallbackQuery):
     parts = callback.data.split(":", 2)
@@ -545,67 +718,108 @@ async def report_to_channel_callback(callback: types.CallbackQuery):
     channel_title = parts[2] if len(parts) > 2 else "Канал"
 
     await callback.answer()
+
+    start_time, end_time, shift_name = get_current_report_shift()
+
     await bot.send_message(
         chat_id=callback.from_user.id,
-        text=f"📊 Собираю отчёт для «{channel_title}»..."
+        text="📊 Собираю отчёт..."
     )
 
     try:
+        # 1. Берём привязки TG к выбранному каналу
         all_channels = await asyncio.to_thread(get_all_account_channels)
 
-        # Берём только session_name привязанные к выбранному каналу
-        session_names = [
+        linked_session_names = [
             row["session_name"]
             for row in all_channels
-            if str(row["channel_id"]) == str(channel_id)
+            if str(row.get("channel_id")) == str(channel_id)
+            and row.get("session_name")
+            and row.get("session_name") != "__bot__"
         ]
 
-        reports = build_reports_by_accounts(detailed=False)
+        print("REPORT DEBUG channel_id:", channel_id, flush=True)
+        print("REPORT DEBUG linked sessions:", linked_session_names, flush=True)
 
-        # Если есть привязки — фильтруем, иначе показываем все
-        filtered = [
-            r for r in reports
-            if r["session_name"] in session_names
-        ] if session_names else reports
+        # 2. Берём реальные активные TG из telegram_accounts
+        accounts_result = await asyncio.to_thread(
+            lambda: supabase.table("telegram_accounts")
+            .select("session_name")
+            .eq("active", True)
+            .execute()
+        )
 
-        if not filtered:
+        active_session_names = [
+            row.get("session_name")
+            for row in (accounts_result.data or [])
+            if row.get("session_name")
+        ]
+
+        print("REPORT DEBUG active sessions:", active_session_names, flush=True)
+
+        # 3. Проверяем, какие привязки реально существуют
+        valid_linked_sessions = [
+            s for s in linked_session_names
+            if s in active_session_names
+        ]
+
+        # Если привязка канала битая/старая — берём все активные TG,
+        # чтобы отчёт показал то, что уже загрузила команда "загрузи историю".
+        if valid_linked_sessions:
+            session_names = valid_linked_sessions
+        else:
+            session_names = active_session_names
+
+        print("REPORT DEBUG final session_names:", session_names, flush=True)
+
+        if not session_names:
             await bot.send_message(
                 chat_id=callback.from_user.id,
                 text="За этот период новых диалогов нет."
             )
             return
 
-        for report in filtered:
+        # 4. НЕ читаем TG заново. Берём уже записанное из telegram_messages.
+        reports = await asyncio.to_thread(
+            build_reports_by_accounts,
+            start_time,
+            end_time,
+            shift_name,
+            False,
+        )
+
+        print("REPORT DEBUG all reports:", [r.get("session_name") for r in reports], flush=True)
+
+        # 5. Оставляем отчёты только по нужным TG
+        filtered_reports = [
+            r for r in reports
+            if r.get("session_name") in session_names
+        ]
+
+        print("REPORT DEBUG filtered reports:", [r.get("session_name") for r in filtered_reports], flush=True)
+
+        if not filtered_reports:
+            await bot.send_message(
+                chat_id=callback.from_user.id,
+                text="За этот период новых диалогов нет."
+            )
+            return
+
+        # 6. Каждый TG получает свою карточку и своё число "Написало"
+        for report in filtered_reports:
             await bot.send_message(
                 chat_id=callback.from_user.id,
                 text=report["text"],
-                reply_markup=report_keyboard(report["session_name"])
+                reply_markup=report_keyboard(
+                    report["session_name"],
+                    start_time=start_time,
+                    end_time=end_time,
+                )
             )
             await asyncio.sleep(0.3)
-
-        await bot.send_message(
-            chat_id=callback.from_user.id,
-            text=f"✅ Отчёт по «{channel_title}» готов."
-        )
-        return
-
-        for report in filtered:
-            await bot.send_message(
-                chat_id=callback.from_user.id,
-                text=report["text"],
-                reply_markup=report_keyboard(report["session_name"])
-            )
-            await asyncio.sleep(0.3)
-
-        await bot.send_message(
-            chat_id=callback.from_user.id,
-            text=f"✅ Отчёт по «{channel_title}» готов."
-        )
-        return
-
 
     except Exception as e:
-        print("REPORT TO CHANNEL CALLBACK ERROR:", e)
+        print("REPORT TO CHANNEL CALLBACK ERROR:", e, flush=True)
         await bot.send_message(
             chat_id=callback.from_user.id,
             text=f"❌ Ошибка отчёта: {e}"
