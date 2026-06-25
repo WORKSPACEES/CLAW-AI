@@ -309,14 +309,20 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
                 "username": dialog_username,
                 "name": msg.get("dialog_name") or dialog_username,
                 "last_text": text,
-                "chat_deleted": msg.get("chat_deleted") is True,
+                "chat_deleted": False,
             }
+
+        if msg.get("chat_deleted") is True:
+            leads[dialog_id]["chat_deleted"] = True
+
+        if text:
+            leads[dialog_id]["last_text"] = text
 
     total_written = len(leads)
     deleted_chats = sum(1 for lead in leads.values() if lead.get("chat_deleted") is True)
     remaining = max(0, total_written - deleted_chats)
 
-    report_date = end_time.astimezone(KYIV_TZ).strftime("%d.%m")
+    report_date = start_time.astimezone(KYIV_TZ).strftime("%d.%m")
 
     report = []
     report.append(f"Дата: {report_date}")
