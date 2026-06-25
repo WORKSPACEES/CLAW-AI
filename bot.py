@@ -441,13 +441,13 @@ def build_channel_keyboard(channels: list) -> InlineKeyboardMarkup:
 
 def build_restore_channel_keyboard(channels: list) -> InlineKeyboardMarkup:
     buttons = []
-    for ch in channels:
+    for i, ch in enumerate(channels):
         title = ch.get("channel_title") or ch.get("channel_id")
         cid = ch.get("channel_id")
         buttons.append([
             InlineKeyboardButton(
                 text=f"📢 {title}",
-                callback_data=f"restore_to_channel:{cid}:{title[:30]}"
+                callback_data=f"restore_ch:{i}:{cid}"
             )
         ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -497,68 +497,92 @@ def twofa_keyboard(token):
         ]
     )
 
-@dp.callback_query(lambda c: c.data.startswith("full_report_account:"))
-async def full_report_callback(callback: types.CallbackQuery):
+@dp.callback_query(lambda c: c.data.startswith("restore_ch:"))
+async def restore_to_channel_callback(callback: types.CallbackQuery):
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+
+    KYIV_TZ = ZoneInfo("Europe/Kyiv")
+
+    parts = callback.data.split(":")
+    channel_id = parts[2] if len(parts) > 2 else None
+
+    if not channel_id:
+        await callback.answer("❌ Канал не найден", show_alert=True)
+        return
+
+    await callback.answer()
+    await bot.send_message(
+        chat_id=callback.from_user.id,
+        text=f"🔁 Начинаю восстановление отчётов за 7 дней..."
+    )
+
+    def get_all_shifts(days=7):
+        now = datetime.now(KYIV_TZ)
+        shifts = []
+        for i in range(days, -1, -1):
+            day = now - timedelta(days=i)
+            day_start = day.replace(hour=9, minute=0, second=0, microsecond=0)
+            day_end = day.replace(hour=21, minute=0, second=0, microsecond=0)
+            night_start = day.replace(hour=21, minute=0, second=0, microsecond=0)
+            night_end = (day + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+            if day_end <= now:
+                shifts.append(("Дневная смена", day_start, day_end))
+            if night_end <= now:
+                shifts.append(("Ночная смена", night_start, night_end))
+        return shifts
+
     try:
-        from datetime import datetime, timedelta
-        from zoneinfo import ZoneInfo
+        shifts = get_all_shifts(days=7)
+        sent_total = 0
+        empty_total = 0
 
-        KYIV_TZ = ZoneInfo("Europe/Kyiv")
+        for shift_name, start_time, end_time in shifts:
+            label = f"{shift_name} {start_time.strftime('%d.%m %H:%M')}—{end_time.strftime('%H:%M')}"
 
-        parts = callback.data.split(":")
-        session_name = parts[1]
+            try:
+                reports = await asyncio.to_thread(
+                    build_reports_by_accounts,
+                    start_time, end_time, shift_name, False
+                )
 
-        # Если в кнопке закодировано время смены — используем его
-        if len(parts) >= 4:
-            start_time = datetime.strptime(parts[2], "%Y%m%dT%H%M").replace(tzinfo=KYIV_TZ)
-            end_time = datetime.strptime(parts[3], "%Y%m%dT%H%M").replace(tzinfo=KYIV_TZ)
-        else:
-            # Старые кнопки без времени — берём текущую смену
-            now = datetime.now(KYIV_TZ)
-            day_start = now.replace(hour=9, minute=0, second=0, microsecond=0)
-            night_start = now.replace(hour=21, minute=0, second=0, microsecond=0)
+                if not reports:
+                    empty_total += 1
+                    continue
 
-            if day_start <= now < night_start:
-                start_time = day_start
-                end_time = night_start
-            elif now >= night_start:
-                start_time = night_start
-                end_time = day_start + timedelta(days=1)
-            else:
-                start_time = night_start - timedelta(days=1)
-                end_time = day_start
+                for report in reports:
+                    await bot.send_message(
+                        channel_id,
+                        report["text"],
+                        reply_markup=report_keyboard(
+                            report["session_name"],
+                            start_time=start_time,
+                            end_time=end_time
+                        )
+                    )
+                    sent_total += 1
+                    await asyncio.sleep(1)
 
-        await callback.answer("📩 Отправляю развёрнутый отчёт в личку")
-
-        reports = build_reports_by_accounts(
-            start_time=start_time,
-            end_time=end_time,
-            detailed=True,
-        )
-
-        needed_report = None
-
-        for report in reports:
-            if report["session_name"] == session_name:
-                needed_report = report
-                break
-
-        if not needed_report:
-            await bot.send_message(
-                chat_id=callback.from_user.id,
-                text="За этот период по этому аккаунту нет данных."
-            )
-            return
+            except Exception as e:
+                await bot.send_message(
+                    chat_id=callback.from_user.id,
+                    text=f"❌ Ошибка смены {label}: {e}"
+                )
 
         await bot.send_message(
             chat_id=callback.from_user.id,
-            text=needed_report["text"]
+            text=(
+                f"✅ Восстановление завершено!\n\n"
+                f"📊 Отправлено отчётов: {sent_total}\n"
+                f"⏭ Пустых смен: {empty_total}"
+            )
         )
 
     except Exception as e:
-        print("FULL REPORT CALLBACK ERROR:", e)
-        await callback.answer("Ошибка развёрнутого отчёта", show_alert=True)
-
+        await bot.send_message(
+            chat_id=callback.from_user.id,
+            text=f"❌ Ошибка восстановления: {e}"
+        )
 @dp.callback_query(lambda c: c.data.startswith("pick_channel:"))
 async def pick_channel_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
