@@ -323,18 +323,16 @@ async def restore_reports_command(message: types.Message):
     )
 
 
-@dp.callback_query(lambda c: c.data.startswith("restore_to_channel:"))
+@dp.callback_query(lambda c: c.data.startswith("restore_ch:"))
 async def restore_to_channel_callback(callback: types.CallbackQuery):
     from datetime import timedelta
     from zoneinfo import ZoneInfo
-    from supabase_db import get_all_account_channels
 
     KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
     parts = callback.data.split(":")
     short_cid = parts[1] if len(parts) > 1 else None
     channel_id = f"-100{short_cid}" if short_cid else None
-    channel_title = parts[2] if len(parts) > 2 else "Канал"
 
     await callback.answer()
     await bot.send_message(
