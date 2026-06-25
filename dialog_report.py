@@ -24,9 +24,8 @@ def parse_dt(value):
 
 
 def load_messages(start_time, end_time):
-    from datetime import timezone
-    start_iso = start_time.astimezone(timezone.utc).isoformat()
-    end_iso = end_time.astimezone(timezone.utc).isoformat()
+    start_iso = start_time.astimezone(KYIV_TZ).isoformat()
+    end_iso = end_time.astimezone(KYIV_TZ).isoformat()
 
     result = (
         supabase.table("telegram_messages")
@@ -213,34 +212,11 @@ def analyze_dialog(username, dialog_messages):
         "manager_action": ai_result.get("manager_action", "Проверить вручную"),
     }
 
-def get_first_incoming_message_date(account_session_name, dialog_id):
-    if not account_session_name or not dialog_id:
-        return None
-
-    try:
-        result = (
-            supabase.table("telegram_messages")
-            .select("message_date")
-            .eq("account_session_name", account_session_name)
-            .eq("dialog_id", str(dialog_id))
-            .eq("direction", "incoming")
-            .order("message_date", desc=False)
-            .limit(1)
-            .execute()
-        )
-
-        data = result.data or []
-
-        if not data:
-            return None
-
-        return parse_dt(data[0].get("message_date"))
-
-    except Exception as e:
-        print("❌ get_first_incoming_message_date ERROR:", e, flush=True)
-        return None
 
 def build_account_report_text(account_session_name, messages, start_time, end_time, shift_name, detailed=False):
+    dialogs = group_by_dialog(messages)
+    results = []
+
     account_username = "-"
     if messages:
         account_username = messages[0].get("account_username") or "-"
@@ -251,85 +227,35 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
     operator_name = account_data.get("operator_name") or account_data.get("pc_name") or "-"
     phone = account_data.get("phone") or "-"
 
-    shift_start = start_time.astimezone(KYIV_TZ)
-    shift_end = end_time.astimezone(KYIV_TZ)
-
-    leads = {}
-
-        deleted_dialog_ids = set()
-        for msg in messages:
-            if msg.get("chat_deleted") is True:
-                d_id = str(msg.get("dialog_id") or msg.get("chat_id") or "")
-                if d_id:
-                    deleted_dialog_ids.add(d_id)
-
-    for msg in messages:
-        # Считаем только входящие
-        if msg.get("direction") != "incoming":
-            continue
-
-        dialog_id = str(
-            msg.get("dialog_id")
-            or msg.get("chat_id")
-            or ""
-        )
-
-        if not dialog_id:
-            continue
-
-        # Системные чаты Telegram не считаем
+    for username, dialog_messages in dialogs.items():
+        # Пропускаем системные чаты Telegram
+        dialog_id = str(dialog_messages[0].get("dialog_id") or "")
         if dialog_id in ("777000", "42777", "0"):
             continue
 
-        dialog_username = str(
-            msg.get("dialog_username")
-            or dialog_id
-        )
-
-        # Ботов / unknown не считаем
-        uname = dialog_username.lower()
-        if uname == "unknown" or uname.endswith("bot"):
+        # Пропускаем ботов
+        uname = str(username).lower()
+        if uname.endswith("bot") or uname == "unknown":
             continue
 
-        text = (msg.get("text") or "").strip()
-        if not text:
+        # Пропускаем диалоги без входящих сообщений — только исходящие не считаем лидами
+        has_incoming = any(m.get("direction") == "incoming" for m in dialog_messages)
+        if not has_incoming:
             continue
 
-        msg_date = parse_dt(msg.get("message_date"))
-
-        if not msg_date:
+        # Пропускаем пустые диалоги
+        has_text = any(m.get("text", "").strip() for m in dialog_messages)
+        if not has_text:
             continue
 
-        if msg_date.tzinfo is None:
-            msg_date = msg_date.replace(tzinfo=KYIV_TZ)
-        else:
-            msg_date = msg_date.astimezone(KYIV_TZ)
+        result = analyze_dialog(username, dialog_messages)
+        results.append(result)
 
-        # Главное правило:
-        # если человек написал входящее в эту смену — считаем этот dialog_id один раз
-        if not (shift_start <= msg_date < shift_end):
-            continue
-
-        if dialog_id not in leads:
-            leads[dialog_id] = {
-                "dialog_id": dialog_id,
-                "username": dialog_username,
-                "name": msg.get("dialog_name") or dialog_username,
-                "last_text": text,
-                "chat_deleted": False,
-            }
-
-        if dialog_id in deleted_dialog_ids:
-            leads[dialog_id]["chat_deleted"] = True
-
-        if text:
-            leads[dialog_id]["last_text"] = text
-
-    total_written = len(leads)
-    deleted_chats = sum(1 for lead in leads.values() if lead.get("chat_deleted") is True)
+    total_written = len(results)
+    deleted_chats = sum(1 for r in results if r.get("deleted") is True)
     remaining = max(0, total_written - deleted_chats)
 
-    report_date = start_time.astimezone(KYIV_TZ).strftime("%d.%m")
+    report_date = end_time.astimezone(KYIV_TZ).strftime("%d.%m")
 
     report = []
     report.append(f"Дата: {report_date}")
@@ -348,21 +274,23 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
 
     report.append("")
 
-    if not leads:
+    if not results:
         report.append("За этот период новых диалогов нет.")
         return "\n".join(report)
 
-    for i, lead in enumerate(leads.values(), start=1):
-        username = str(lead.get("username") or lead.get("dialog_id") or "unknown")
+    for i, r in enumerate(results, start=1):
+        username = str(r.get("username") or "unknown")
 
-        if username.isdigit():
+        if r.get("deleted") is True or username.isdigit():
             username_line = f"ID {username}"
         else:
             username_line = f"@{username}"
 
         report.append(f"{i}. {username_line}")
-        report.append(f"Имя: {lead.get('name')}")
-        report.append(f"Последнее: {lead.get('last_text')[:120]}")
+        report.append(f"Диагноз: {r.get('diagnosis')}")
+        report.append(f"Деталь: {r.get('detail')}")
+        report.append(f"Итог: {r.get('result')}")
+        report.append(f"Действие: {r.get('manager_action')}")
         report.append("")
 
     return "\n".join(report)
@@ -411,9 +339,6 @@ def build_reports_by_accounts(start_time=None, end_time=None, shift_name=None, d
     reports = []
 
     for account_session_name, account_messages in accounts.items():
-        if not account_session_name or account_session_name == "unknown":
-            continue
-
         text = build_account_report_text(
             account_session_name=account_session_name,
             messages=account_messages,
