@@ -131,7 +131,6 @@ async def send_shift_report(report_time, target_channel_id=None):
             detailed=False,
         )
 
-        # Загружаем привязки аккаунт → канал
         account_channels = {
             row["session_name"]: row
             for row in get_all_account_channels()
@@ -146,22 +145,13 @@ async def send_shift_report(report_time, target_channel_id=None):
             session_name = report["session_name"]
             channel = account_channels.get(session_name)
 
-            # Если есть привязка — шлём в свой канал, иначе в дефолтный
             target_chat = channel["channel_id"] if channel else (target_channel_id or REPORT_CHAT_ID)
 
             await bot.send_message(
                 target_chat,
                 report["text"],
-                reply_markup=report_keyboard(session_name)
+                reply_markup=report_keyboard(session_name, start_time=start_time, end_time=end_time)
             )
-
-            print(f"✅ Отчёт [{session_name}] → {target_chat}")
-
-        print("✅ Отчёты по аккаунтам отправлены")
-
-    except Exception as e:
-        print("❌ Ошибка отправки отчёта:", e)
-        await bot.send_message(REPORT_CHAT_ID, f"❌ Ошибка отчёта: {e}")
 
 
 async def main():
