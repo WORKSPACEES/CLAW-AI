@@ -234,6 +234,39 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
 
     incoming_messages = result.data or []
 
+    # ЖЁСТКИЙ ПОДСЧЁТ КАК В SUPABASE SQL
+stat_res = (
+    supabase.table("telegram_messages")
+    .select("dialog_id, chat_deleted")
+    .eq("account_session_name", account_session_name)
+    .eq("direction", "incoming")
+    .gte("message_date", start_iso)
+    .lt("message_date", end_iso)
+    .execute()
+)
+
+stat_rows = stat_res.data or []
+
+all_dialogs = set()
+deleted_dialogs = set()
+active_dialogs = set()
+
+for row in stat_rows:
+    dialog_id = str(row.get("dialog_id") or "")
+    if not dialog_id:
+        continue
+
+    all_dialogs.add(dialog_id)
+
+    if row.get("chat_deleted") is True:
+        deleted_dialogs.add(dialog_id)
+    else:
+        active_dialogs.add(dialog_id)
+
+total_written = len(all_dialogs)
+deleted_chats = len(deleted_dialogs)
+remaining = len(active_dialogs)
+
     def first_value(*keys, default="-"):
         for key in keys:
             for msg in incoming_messages:
@@ -303,10 +336,6 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
                 leads[dialog_key]["deleted"] = bool(msg.get("chat_deleted"))
                 leads[dialog_key]["last_date"] = msg_date
                 leads[dialog_key]["last_text"] = msg.get("text") or ""
-
-    total_written = len(leads)
-    deleted_chats = sum(1 for lead in leads.values() if lead.get("deleted") is True)
-    remaining = max(0, total_written - deleted_chats)
 
     report_date = end_time.astimezone(KYIV_TZ).strftime("%d.%m")
 
