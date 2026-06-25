@@ -1309,7 +1309,10 @@ async def load_history_command(message: types.Message):
     await message.answer("⏳ Загружаю историю за текущую смену по всем аккаунтам...")
 
     try:
-        accounts = load_accounts()
+        accounts_result = await asyncio.to_thread(
+            lambda: supabase.table("telegram_accounts").select("*").eq("active", True).execute()
+        )
+        accounts = accounts_result.data or []
 
         if not accounts:
             await message.answer("❌ Нет подключённых аккаунтов.")
