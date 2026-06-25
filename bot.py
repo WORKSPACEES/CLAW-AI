@@ -1306,6 +1306,7 @@ async def load_history_command(message: types.Message):
 
     from supabase_db import supabase
     from datetime import datetime, timedelta
+    from telegram_connect import API_ID, API_HASH
     KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
     await message.answer("⏳ Загружаю историю за текущую смену по всем аккаунтам...")
