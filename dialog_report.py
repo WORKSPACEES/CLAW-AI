@@ -23,20 +23,41 @@ def parse_dt(value):
         return None
 
 
-def load_messages(start_time, end_time):
+def fetch_messages_paginated(start_time, end_time, account_session_name=None):
     start_iso = start_time.astimezone(KYIV_TZ).isoformat()
     end_iso = end_time.astimezone(KYIV_TZ).isoformat()
 
-    result = (
-        supabase.table("telegram_messages")
-        .select("*")
-        .gte("message_date", start_iso)
-        .lt("message_date", end_iso)
-        .order("message_date", desc=False)
-        .execute()
-    )
+    all_rows = []
+    page_size = 1000
+    offset = 0
 
-    return result.data or []
+    while True:
+        query = (
+            supabase.table("telegram_messages")
+            .select("*")
+            .gte("message_date", start_iso)
+            .lt("message_date", end_iso)
+            .order("message_date", desc=False)
+        )
+
+        if account_session_name:
+            query = query.eq("account_session_name", account_session_name)
+
+        result = query.range(offset, offset + page_size - 1).execute()
+        rows = result.data or []
+
+        all_rows.extend(rows)
+
+        if len(rows) < page_size:
+            break
+
+        offset += page_size
+
+    return all_rows
+
+
+def load_messages(start_time, end_time):
+    return fetch_messages_paginated(start_time, end_time)
 
 
 def load_account_by_session(session_name):
@@ -219,20 +240,14 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
     start_iso = start_time.astimezone(KYIV_TZ).isoformat()
     end_iso = end_time.astimezone(KYIV_TZ).isoformat()
 
-    # Берём ВСЕ сообщения аккаунта за смену для развёрнутого анализа Groq
-    all_res = (
-        supabase.table("telegram_messages")
-        .select("*")
-        .eq("account_session_name", account_session_name)
-        .gte("message_date", start_iso)
-        .lt("message_date", end_iso)
-        .order("message_date", desc=False)
-        .execute()
+    # Берём все сообщения аккаунта за смену.
+    # Groq НЕ считает цифры, он только анализирует диалоги ниже.
+    all_messages = fetch_messages_paginated(
+        start_time=start_time,
+        end_time=end_time,
+        account_session_name=account_session_name,
     )
 
-    all_messages = all_res.data or []
-
-    # Отдельно берём только входящие — это лиды
     incoming_messages = [
         msg for msg in all_messages
         if msg.get("direction") == "incoming"
@@ -275,7 +290,7 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
             or str(msg.get("id"))
         )
 
-    # Группируем ВСЕ сообщения по диалогам, чтобы Groq видел весь диалог, а не только входящие
+    # Все сообщения группируем по диалогам только для Groq-анализа.
     dialog_messages_map = defaultdict(list)
 
     for msg in all_messages:
@@ -283,22 +298,20 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
         if dialog_key:
             dialog_messages_map[str(dialog_key)].append(msg)
 
-    all_dialogs = set()
-    deleted_dialogs = set()
-    active_dialogs = set()
-
     leads = {}
 
+    # ЦИФРЫ СЧИТАЕМ ТОЛЬКО ТУТ, ПО ВХОДЯЩИМ.
+    # Groq сюда вообще не лезет.
     for msg in incoming_messages:
         dialog_id = str(msg.get("dialog_id") or msg.get("chat_id") or "")
         dialog_username = msg.get("dialog_username") or msg.get("username")
         dialog_name = msg.get("dialog_name") or msg.get("chat_name") or msg.get("sender_name")
 
-        # Пропускаем системные чаты Telegram
+        # системные чаты Telegram не считаем
         if dialog_id in ("777000", "42777", "0"):
             continue
 
-        # Пропускаем ботов
+        # ботов не считаем
         uname = str(dialog_username or "").lower()
         if uname.endswith("bot"):
             continue
@@ -309,13 +322,6 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
 
         dialog_key = str(dialog_key)
 
-        all_dialogs.add(dialog_key)
-
-        if msg.get("chat_deleted") is True:
-            deleted_dialogs.add(dialog_key)
-        else:
-            active_dialogs.add(dialog_key)
-
         msg_date = parse_dt(msg.get("message_date")) or parse_dt(msg.get("created_at"))
 
         if dialog_key not in leads:
@@ -325,6 +331,7 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
                 "name": dialog_name,
                 "last_text": msg.get("text") or "",
                 "last_date": msg_date,
+                "deleted": bool(msg.get("chat_deleted")),
             }
         else:
             old_date = leads[dialog_key].get("last_date")
@@ -333,10 +340,11 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
                 leads[dialog_key]["last_date"] = msg_date
                 leads[dialog_key]["username"] = dialog_username or leads[dialog_key].get("username")
                 leads[dialog_key]["name"] = dialog_name or leads[dialog_key].get("name")
+                leads[dialog_key]["deleted"] = bool(msg.get("chat_deleted"))
 
-    total_written = len(all_dialogs)
-    deleted_chats = len(deleted_dialogs)
-    remaining = len(active_dialogs)
+    total_written = len(leads)
+    deleted_chats = sum(1 for lead in leads.values() if lead.get("deleted") is True)
+    remaining = max(0, total_written - deleted_chats)
 
     report_date = end_time.astimezone(KYIV_TZ).strftime("%d.%m")
 
@@ -352,7 +360,7 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
     report.append(f"Удалили чат: {deleted_chats}")
     report.append(f"Осталось: {remaining}")
 
-    # Обычный отчёт — только цифры, без Groq
+    # Короткий отчёт — только цифры, без Groq.
     if not detailed:
         return "\n".join(report)
 
@@ -362,7 +370,8 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
         report.append("За этот период новых диалогов нет.")
         return "\n".join(report)
 
-    # Развёрнутый отчёт — тут уже анализируем Groq
+    # Развёрнутый отчёт — Groq только тут.
+    # Он НЕ считает лидов, а только анализирует текст чата.
     for i, (dialog_key, lead) in enumerate(leads.items(), start=1):
         username = lead.get("username")
         dialog_id = lead.get("dialog_id")
@@ -393,7 +402,7 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
 
         report.append(f"{i}. {user_line}")
         report.append(f"Имя: {name}")
-        report.append(f"Удалил чат: {'Да' if dialog_key in deleted_dialogs else 'Нет'}")
+        report.append(f"Удалил чат: {'Да' if lead.get('deleted') else 'Нет'}")
         report.append(f"Последнее сообщение: {lead.get('last_text') or '-'}")
         report.append(f"Диагноз: {ai_result.get('diagnosis')}")
         report.append(f"Деталь: {ai_result.get('detail')}")
