@@ -574,15 +574,11 @@ async def report_to_channel_callback(callback: types.CallbackQuery):
 
         for report in filtered:
             await bot.send_message(
-                channel_id,
-                report["text"],
+                chat_id=callback.from_user.id,
+                text=report["text"],
                 reply_markup=report_keyboard(report["session_name"])
             )
 
-        await bot.send_message(
-            chat_id=callback.from_user.id,
-            text=f"✅ Отчёт отправлен в «{channel_title}»"
-        )
 
     except Exception as e:
         print("REPORT TO CHANNEL CALLBACK ERROR:", e)
@@ -835,25 +831,16 @@ async def admin_chat(message: types.Message):
         or "отчет по чатам" in lower_text
         or "отчёт по чатам" in lower_text
     ):
-        await message.answer("📊 Собираю отчёт...")
+        channels = await asyncio.to_thread(get_bot_channels, "default")
 
-        try:
-            reports = build_reports_by_accounts(detailed=False)
+        if not channels:
+            await message.answer("❌ Нет подключённых каналов. Напиши Claw в нужном канале/группе.")
+            return
 
-            if not reports:
-                await message.answer("За этот период новых диалогов нет.")
-                return
-
-            for report in reports:
-                await message.answer(
-                    report["text"],
-                    reply_markup=report_keyboard(report["session_name"])
-                )
-
-        except Exception as e:
-            print("DIALOG REPORT ERROR:", e)
-            await message.answer(f"❌ Ошибка отчёта: {e}")
-
+        await message.answer(
+            "📢 По какому каналу собрать отчёт?",
+            reply_markup=build_report_channel_keyboard(channels)
+        )
         return
 
     # 3. Состояние подключения Telegram
