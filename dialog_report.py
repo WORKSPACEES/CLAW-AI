@@ -219,53 +219,24 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
     start_iso = start_time.astimezone(KYIV_TZ).isoformat()
     end_iso = end_time.astimezone(KYIV_TZ).isoformat()
 
-    # Берём данные напрямую из Supabase, а не из messages,
-    # потому что messages сверху может быть уже обрезан.
-    result = (
+    # Берём ВСЕ сообщения аккаунта за смену для развёрнутого анализа Groq
+    all_res = (
         supabase.table("telegram_messages")
         .select("*")
         .eq("account_session_name", account_session_name)
-        .eq("direction", "incoming")
         .gte("message_date", start_iso)
         .lt("message_date", end_iso)
         .order("message_date", desc=False)
         .execute()
     )
 
-    incoming_messages = result.data or []
+    all_messages = all_res.data or []
 
-    # ЖЁСТКИЙ ПОДСЧЁТ КАК В SUPABASE SQL
-    stat_res = (
-        supabase.table("telegram_messages")
-        .select("dialog_id, chat_deleted")
-        .eq("account_session_name", account_session_name)
-        .eq("direction", "incoming")
-        .gte("message_date", start_iso)
-        .lt("message_date", end_iso)
-        .execute()
-    )
-
-    stat_rows = stat_res.data or []
-
-    all_dialogs = set()
-    deleted_dialogs = set()
-    active_dialogs = set()
-
-    for row in stat_rows:
-        dialog_id = str(row.get("dialog_id") or "")
-        if not dialog_id:
-            continue
-
-        all_dialogs.add(dialog_id)
-
-        if row.get("chat_deleted") is True:
-            deleted_dialogs.add(dialog_id)
-        else:
-            active_dialogs.add(dialog_id)
-
-    total_written = len(all_dialogs)
-    deleted_chats = len(deleted_dialogs)
-    remaining = len(active_dialogs)
+    # Отдельно берём только входящие — это лиды
+    incoming_messages = [
+        msg for msg in all_messages
+        if msg.get("direction") == "incoming"
+    ]
 
     def first_value(*keys, default="-"):
         for key in keys:
@@ -275,7 +246,7 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
                     return value
 
         for key in keys:
-            for msg in messages:
+            for msg in all_messages:
                 value = msg.get(key)
                 if value not in (None, "", "NULL"):
                     return value
@@ -291,6 +262,30 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
     ad_name = first_value("ad_name")
     operator_name = first_value("operator_name", "pc_name")
     phone = first_value("phone")
+
+    def make_dialog_key(msg):
+        dialog_id = str(msg.get("dialog_id") or msg.get("chat_id") or "")
+        dialog_username = msg.get("dialog_username") or msg.get("username")
+        dialog_name = msg.get("dialog_name") or msg.get("chat_name") or msg.get("sender_name")
+
+        return (
+            dialog_id
+            or dialog_username
+            or dialog_name
+            or str(msg.get("id"))
+        )
+
+    # Группируем ВСЕ сообщения по диалогам, чтобы Groq видел весь диалог, а не только входящие
+    dialog_messages_map = defaultdict(list)
+
+    for msg in all_messages:
+        dialog_key = make_dialog_key(msg)
+        if dialog_key:
+            dialog_messages_map[str(dialog_key)].append(msg)
+
+    all_dialogs = set()
+    deleted_dialogs = set()
+    active_dialogs = set()
 
     leads = {}
 
@@ -308,15 +303,18 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
         if uname.endswith("bot"):
             continue
 
-        dialog_key = (
-            dialog_id
-            or dialog_username
-            or dialog_name
-            or str(msg.get("id"))
-        )
-
+        dialog_key = make_dialog_key(msg)
         if not dialog_key:
             continue
+
+        dialog_key = str(dialog_key)
+
+        all_dialogs.add(dialog_key)
+
+        if msg.get("chat_deleted") is True:
+            deleted_dialogs.add(dialog_key)
+        else:
+            active_dialogs.add(dialog_key)
 
         msg_date = parse_dt(msg.get("message_date")) or parse_dt(msg.get("created_at"))
 
@@ -325,17 +323,20 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
                 "dialog_id": dialog_id,
                 "username": dialog_username,
                 "name": dialog_name,
-                "deleted": bool(msg.get("chat_deleted")),
-                "last_date": msg_date,
                 "last_text": msg.get("text") or "",
+                "last_date": msg_date,
             }
         else:
             old_date = leads[dialog_key].get("last_date")
-
             if old_date is None or (msg_date is not None and msg_date >= old_date):
-                leads[dialog_key]["deleted"] = bool(msg.get("chat_deleted"))
-                leads[dialog_key]["last_date"] = msg_date
                 leads[dialog_key]["last_text"] = msg.get("text") or ""
+                leads[dialog_key]["last_date"] = msg_date
+                leads[dialog_key]["username"] = dialog_username or leads[dialog_key].get("username")
+                leads[dialog_key]["name"] = dialog_name or leads[dialog_key].get("name")
+
+    total_written = len(all_dialogs)
+    deleted_chats = len(deleted_dialogs)
+    remaining = len(active_dialogs)
 
     report_date = end_time.astimezone(KYIV_TZ).strftime("%d.%m")
 
@@ -351,6 +352,7 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
     report.append(f"Удалили чат: {deleted_chats}")
     report.append(f"Осталось: {remaining}")
 
+    # Обычный отчёт — только цифры, без Groq
     if not detailed:
         return "\n".join(report)
 
@@ -360,22 +362,43 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
         report.append("За этот период новых диалогов нет.")
         return "\n".join(report)
 
-    for i, lead in enumerate(leads.values(), start=1):
+    # Развёрнутый отчёт — тут уже анализируем Groq
+    for i, (dialog_key, lead) in enumerate(leads.items(), start=1):
         username = lead.get("username")
         dialog_id = lead.get("dialog_id")
         name = lead.get("name") or "-"
 
         if username:
             user_line = f"@{username}"
+            analyze_name = username
         elif dialog_id:
             user_line = f"ID {dialog_id}"
+            analyze_name = dialog_id
         else:
             user_line = name
+            analyze_name = name
+
+        dialog_messages = dialog_messages_map.get(dialog_key) or []
+
+        try:
+            ai_result = analyze_dialog(analyze_name, dialog_messages)
+        except Exception as e:
+            print("❌ GROQ ANALYZE ERROR:", e)
+            ai_result = {
+                "diagnosis": "Ошибка анализа",
+                "detail": "Groq не смог обработать диалог",
+                "result": "Проверить вручную",
+                "manager_action": "Открыть чат и проверить",
+            }
 
         report.append(f"{i}. {user_line}")
         report.append(f"Имя: {name}")
-        report.append(f"Удалил чат: {'Да' if lead.get('deleted') else 'Нет'}")
+        report.append(f"Удалил чат: {'Да' if dialog_key in deleted_dialogs else 'Нет'}")
         report.append(f"Последнее сообщение: {lead.get('last_text') or '-'}")
+        report.append(f"Диагноз: {ai_result.get('diagnosis')}")
+        report.append(f"Деталь: {ai_result.get('detail')}")
+        report.append(f"Итог: {ai_result.get('result')}")
+        report.append(f"Действие: {ai_result.get('manager_action')}")
         report.append("")
 
     return "\n".join(report)
