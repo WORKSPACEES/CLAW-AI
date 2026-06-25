@@ -221,7 +221,7 @@ async def start_account(account):
 
     print(f"✅ Загружено исторических сообщений: {loaded}", flush=True)
 
-        @client.on(events.NewMessage())
+    @client.on(events.NewMessage())
     async def message_handler(event):
         try:
             print("📩 NEW MESSAGE EVENT", flush=True)
