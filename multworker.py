@@ -266,48 +266,65 @@ async def start_account(account):
     return client
 
 
-async def main():
-    print("✅ multworker.py запущен", flush=True)
-    print("🔎 Загружаю Telegram-аккаунты из Supabase...", flush=True)
+# session_name -> TelegramClient, чтобы не запускать один и тот же аккаунт дважды
+running_clients = {}
 
-    accounts = load_accounts()
 
-    if not accounts:
-        print("❌ В Supabase нет active аккаунтов с session_string", flush=True)
-        print("⏳ Жду 60 секунд и проверю снова...", flush=True)
-        await asyncio.sleep(60)
-        return
+async def run_client_forever(session_name, client):
+    """Слушает клиента до отключения, потом убирает его из running_clients,
+    чтобы при следующей проверке он мог быть переподключён (если сессия жива)."""
+    try:
+        await client.run_until_disconnected()
+    finally:
+        running_clients.pop(session_name, None)
+        print(f"⚠️ Клиент {session_name} отключился, убран из активных", flush=True)
 
-    print(f"🔎 Найдено аккаунтов: {len(accounts)}", flush=True)
 
-    clients = []
-
-    for account in accounts:
-        username = account.get("username") or account.get("phone") or account.get("session_name")
-
+async def watch_accounts():
+    """Раз в минуту проверяет Supabase и подключает новые аккаунты на ходу,
+    без перезапуска всего процесса multworker."""
+    while True:
         try:
-            print(f"🔌 Пробую запустить аккаунт: {username}", flush=True)
+            accounts = load_accounts()
 
-            client = await start_account(account)
-
-            if client:
-                clients.append(client)
-                print(f"✅ Аккаунт добавлен в прослушку: {username}", flush=True)
+            if not accounts:
+                print("❌ В Supabase нет active аккаунтов с session_string", flush=True)
             else:
-                print(f"⚠️ Аккаунт не вернул client: {username}", flush=True)
+                for account in accounts:
+                    session_name = account.get("session_name")
+                    username = account.get("username") or account.get("phone") or session_name
+
+                    if not session_name or session_name in running_clients:
+                        continue
+
+                    try:
+                        print(f"🔌 Найден новый/неподключённый аккаунт: {username}", flush=True)
+
+                        client = await start_account(account)
+
+                        if client:
+                            running_clients[session_name] = client
+                            asyncio.create_task(run_client_forever(session_name, client))
+                            print(f"✅ Аккаунт добавлен в прослушку на ходу: {username}", flush=True)
+                        else:
+                            print(f"⚠️ Аккаунт не вернул client: {username}", flush=True)
+
+                    except Exception as e:
+                        print(f"❌ Не смог запустить аккаунт {username}: {e}", flush=True)
 
         except Exception as e:
-            print(f"❌ Не смог запустить аккаунт {username}: {e}", flush=True)
+            print("❌ watch_accounts ERROR:", e, flush=True)
 
-    if not clients:
-        print("❌ Ни один аккаунт не запустился", flush=True)
-        return
+        await asyncio.sleep(60)
 
-    print("✅ Все доступные аккаунты слушаются. Жду сообщения...", flush=True)
 
-    await asyncio.gather(
-        *[client.run_until_disconnected() for client in clients]
-    )
+async def main():
+    print("✅ multworker.py запущен", flush=True)
+    print("🔎 Загружаю Telegram-аккаунты из Supabase (с автоподхватом новых)...", flush=True)
+
+    # Бесконечный цикл проверки — новые аккаунты подключаются сами,
+    # без необходимости перезапускать весь сервис.
+    await watch_accounts()
 
 
 if __name__ == "__main__":
