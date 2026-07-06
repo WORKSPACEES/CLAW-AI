@@ -359,9 +359,9 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
     # ── Параллельный Groq-анализ всех диалогов одновременно ──────────────────
 
     def analyze_one_sync(i, dialog_key, lead):
-    import time
-    time.sleep(i * 3)  # каждый следующий диалог ждёт чуть дольше
-    username = lead.get("username")
+        import time
+        time.sleep(i * 3)  # каждый следующий диалог ждёт чуть дольше
+        username = lead.get("username")
         dialog_id = lead.get("dialog_id")
         name = lead.get("name") or "-"
 
