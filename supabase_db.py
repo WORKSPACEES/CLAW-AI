@@ -160,3 +160,13 @@ def remove_bot_channel(channel_id: str):
         supabase.table("report_channels").delete().eq("channel_id", str(channel_id)).execute()
     except Exception as e:
         print("⚠️ remove_bot_channel ERROR:", e)
+
+def cleanup_old_messages(days: int = 3):
+    """Удаляет сообщения старше N дней из telegram_messages."""
+    try:
+        from datetime import datetime, timezone, timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        result = supabase.table("telegram_messages").delete().lt("created_at", cutoff).execute()
+        print(f"🧹 Очистка: удалено старых сообщений (старше {days} дней)", flush=True)
+    except Exception as e:
+        print(f"❌ cleanup_old_messages ERROR: {e}", flush=True)
