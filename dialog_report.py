@@ -359,7 +359,9 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
     # ── Параллельный Groq-анализ всех диалогов одновременно ──────────────────
 
     def analyze_one_sync(i, dialog_key, lead):
-        username = lead.get("username")
+    import time
+    time.sleep(i * 3)  # каждый следующий диалог ждёт чуть дольше
+    username = lead.get("username")
         dialog_id = lead.get("dialog_id")
         name = lead.get("name") or "-"
 
@@ -399,7 +401,7 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
 
     leads_list = list(leads.items())
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
         futures = [
             pool.submit(analyze_one_sync, i, dialog_key, lead)
             for i, (dialog_key, lead) in enumerate(leads_list, start=1)
@@ -444,7 +446,7 @@ def get_current_shift_period(now=None):
     }
 
 
-def build_reports_by_accounts(start_time=None, end_time=None, shift_name=None, detailed=False):
+def build_reports_by_accounts(start_time=None, end_time=None, shift_name=None, detailed=False, session_name_filter=None):
     if start_time is None or end_time is None:
         period = get_current_shift_period()
         start_time = period["start_time"]
@@ -453,6 +455,8 @@ def build_reports_by_accounts(start_time=None, end_time=None, shift_name=None, d
 
     messages = load_messages(start_time=start_time, end_time=end_time)
     accounts = group_by_account(messages)
+    if session_name_filter:
+        accounts = {k: v for k, v in accounts.items() if k == session_name_filter}
 
     reports = []
 
