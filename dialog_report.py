@@ -235,13 +235,11 @@ def analyze_dialog(username, dialog_messages):
 
 
 def build_account_report_text(account_session_name, messages, start_time, end_time, shift_name, detailed=False):
+    import asyncio
+    import concurrent.futures
+
     account_data = load_account_by_session(account_session_name)
 
-    start_iso = start_time.astimezone(KYIV_TZ).isoformat()
-    end_iso = end_time.astimezone(KYIV_TZ).isoformat()
-
-    # Берём все сообщения аккаунта за смену.
-    # Groq НЕ считает цифры, он только анализирует диалоги ниже.
     all_messages = fetch_messages_paginated(
         start_time=start_time,
         end_time=end_time,
@@ -259,18 +257,15 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
                 value = msg.get(key)
                 if value not in (None, "", "NULL"):
                     return value
-
         for key in keys:
             for msg in all_messages:
                 value = msg.get(key)
                 if value not in (None, "", "NULL"):
                     return value
-
         for key in keys:
             value = account_data.get(key)
             if value not in (None, "", "NULL"):
                 return value
-
         return default
 
     account_username = first_value("account_username", "username")
@@ -282,7 +277,6 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
         dialog_id = str(msg.get("dialog_id") or msg.get("chat_id") or "")
         dialog_username = msg.get("dialog_username") or msg.get("username")
         dialog_name = msg.get("dialog_name") or msg.get("chat_name") or msg.get("sender_name")
-
         return (
             dialog_id
             or dialog_username
@@ -290,9 +284,7 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
             or str(msg.get("id"))
         )
 
-    # Все сообщения группируем по диалогам только для Groq-анализа.
     dialog_messages_map = defaultdict(list)
-
     for msg in all_messages:
         dialog_key = make_dialog_key(msg)
         if dialog_key:
@@ -300,18 +292,14 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
 
     leads = {}
 
-    # ЦИФРЫ СЧИТАЕМ ТОЛЬКО ТУТ, ПО ВХОДЯЩИМ.
-    # Groq сюда вообще не лезет.
     for msg in incoming_messages:
         dialog_id = str(msg.get("dialog_id") or msg.get("chat_id") or "")
         dialog_username = msg.get("dialog_username") or msg.get("username")
         dialog_name = msg.get("dialog_name") or msg.get("chat_name") or msg.get("sender_name")
 
-        # системные чаты Telegram не считаем
         if dialog_id in ("777000", "42777", "0"):
             continue
 
-        # ботов не считаем
         uname = str(dialog_username or "").lower()
         if uname.endswith("bot"):
             continue
@@ -321,7 +309,6 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
             continue
 
         dialog_key = str(dialog_key)
-
         msg_date = parse_dt(msg.get("message_date")) or parse_dt(msg.get("created_at"))
 
         if dialog_key not in leads:
@@ -360,7 +347,6 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
     report.append(f"Удалили чат: {deleted_chats}")
     report.append(f"Осталось: {remaining}")
 
-    # Короткий отчёт — только цифры, без Groq.
     if not detailed:
         return "\n".join(report)
 
@@ -370,9 +356,9 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
         report.append("За этот период новых диалогов нет.")
         return "\n".join(report)
 
-    # Развёрнутый отчёт — Groq только тут.
-    # Он НЕ считает лидов, а только анализирует текст чата.
-    for i, (dialog_key, lead) in enumerate(leads.items(), start=1):
+    # ── Параллельный Groq-анализ всех диалогов одновременно ──────────────────
+
+    def analyze_one_sync(i, dialog_key, lead):
         username = lead.get("username")
         dialog_id = lead.get("dialog_id")
         name = lead.get("name") or "-"
@@ -400,15 +386,30 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
                 "manager_action": "Открыть чат и проверить",
             }
 
-        report.append(f"{i}. {user_line}")
-        report.append(f"Имя: {name}")
-        report.append(f"Удалил чат: {'Да' if lead.get('deleted') else 'Нет'}")
-        report.append(f"Последнее сообщение: {lead.get('last_text') or '-'}")
-        report.append(f"Диагноз: {ai_result.get('diagnosis')}")
-        report.append(f"Деталь: {ai_result.get('detail')}")
-        report.append(f"Итог: {ai_result.get('result')}")
-        report.append(f"Действие: {ai_result.get('manager_action')}")
-        report.append("")
+        lines = []
+        lines.append(f"{i}. {user_line}")
+        lines.append(f"Имя: {name}")
+        lines.append(f"Удалил чат: {'Да' if lead.get('deleted') else 'Нет'}")
+        lines.append(f"Последнее сообщение: {lead.get('last_text') or '-'}")
+        lines.append(f"Детали: {ai_result.get('detail')}")
+        lines.append(f"Анализ: {ai_result.get('result')}")
+        lines.append(f"Вероятность: {ai_result.get('diagnosis')}")
+        lines.append("")
+        return (i, "\n".join(lines))
+
+    leads_list = list(leads.items())
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+        futures = [
+            pool.submit(analyze_one_sync, i, dialog_key, lead)
+            for i, (dialog_key, lead) in enumerate(leads_list, start=1)
+        ]
+        results = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+    results.sort(key=lambda x: x[0])
+
+    for _, block in results:
+        report.append(block)
 
     return "\n".join(report)
 
