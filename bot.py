@@ -363,11 +363,17 @@ async def full_report_callback(callback: types.CallbackQuery):
         session_name = callback.data.split(":", 1)[1]
 
         await callback.answer("📩 Отправляю развёрнутый отчёт в личку")
+        await bot.send_message(
+            chat_id=callback.from_user.id,
+            text=f"🤖 Анализирую диалоги для @{session_name}..."
+        )
 
-        reports = build_reports_by_accounts(detailed=True)
+        reports = build_reports_by_accounts(
+            detailed=True,
+            session_name_filter=session_name
+        )
 
         needed_report = None
-
         for report in reports:
             if report["session_name"] == session_name:
                 needed_report = report
@@ -380,10 +386,13 @@ async def full_report_callback(callback: types.CallbackQuery):
             )
             return
 
-        await bot.send_message(
-            chat_id=callback.from_user.id,
-            text=needed_report["text"]
-        )
+        text = needed_report["text"]
+        chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        for chunk in chunks:
+            await bot.send_message(
+                chat_id=callback.from_user.id,
+                text=chunk
+            )
 
     except Exception as e:
         print("FULL REPORT CALLBACK ERROR:", e)
