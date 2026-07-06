@@ -2,6 +2,7 @@ import os
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
+from supabase_db import cleanup_old_messages
 
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
@@ -131,6 +132,12 @@ async def check_deleted_chats(client, account):
 
         await asyncio.sleep(300)
 
+async def cleanup_loop():
+    """Раз в 6 часов чистит сообщения старше 3 дней."""
+    while True:
+        cleanup_old_messages(days=3)
+        await asyncio.sleep(6 * 60 * 60)  # каждые 6 часов
+
 
 async def start_account(account):
     session_string = account.get("session_string")
@@ -152,7 +159,14 @@ async def start_account(account):
     me = await client.get_me()
     print(f"🟢 Аккаунт запущен из Supabase: @{me.username or me.id}", flush=True)
 
-    print("🔎 Загружаю историю сообщений за текущую смену...", flush=True)
+    try:
+        supabase.table("telegram_accounts").update({
+            "username": me.username or str(me.id)
+        }).eq("session_name", account.get("session_name")).execute()
+    except Exception as e:
+        print(f"⚠️ Не смог обновить username в Supabase: {e}", flush=True)
+
+        print("🔎 Загружаю историю сообщений за текущую смену...", flush=True)
 
     from datetime import timezone
     from zoneinfo import ZoneInfo
@@ -324,6 +338,7 @@ async def main():
 
     # Бесконечный цикл проверки — новые аккаунты подключаются сами,
     # без необходимости перезапускать весь сервис.
+    asyncio.create_task(cleanup_loop())
     await watch_accounts()
 
 
