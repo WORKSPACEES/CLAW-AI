@@ -623,12 +623,12 @@ async def add_operator_handler(message: types.Message):
         username = username_match.group(1) if username_match else str(telegram_id)
     else:
         username = username_match.group(1)
-        try:
-            chat = await bot.get_chat(f"@{username}")
-            telegram_id = chat.id
-        except Exception:
-            await message.answer(f"❌ Не могу найти @{username} автоматически.\n\nПопробуй добавить по ID:\nдобавить оператора @{username} ID:123456789 ПК:{pc_name}\n\nID можно узнать через @userinfobot")
-            return
+        await message.answer(
+            f"❌ Укажи ID оператора.\n\n"
+            f"Формат:\nдобавить оператора @{username} ID:123456789 ПК:{pc_name}\n\n"
+            f"ID узнай через @userinfobot — перешли туда любое сообщение оператора."
+        )
+        return
     try:
         await asyncio.to_thread(
             lambda: supabase.table("operators").upsert({
