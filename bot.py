@@ -635,12 +635,26 @@ async def add_operator_handler(message: types.Message):
         username = username_match.group(1) if username_match else str(telegram_id)
     else:
         username = username_match.group(1)
-        await message.answer(
-            f"❌ Укажи ID оператора.\n\n"
-            f"Формат:\nдобавить оператора @{username} ID:123456789 ПК:{pc_name}\n\n"
-            f"ID узнай через @userinfobot — перешли туда любое сообщение оператора."
-        )
-        return
+        try:
+            result = await asyncio.to_thread(
+                lambda: supabase.table("known_users")
+                .select("telegram_id")
+                .eq("username", username)
+                .limit(1)
+                .execute()
+            )
+            if result.data:
+                telegram_id = result.data[0]["telegram_id"]
+            else:
+                await message.answer(
+                    f"❌ Оператор @{username} ещё не писал боту.\n\n"
+                    f"Пусть напишет боту /start, потом попробуй снова.\n\n"
+                    f"Или добавь по ID:\nдобавить оператора @{username} ID:123456789 ПК:{pc_name}"
+                )
+                return
+        except Exception as e:
+            await message.answer(f"❌ Ошибка поиска: {e}")
+            return
     try:
         await asyncio.to_thread(
             lambda: supabase.table("operators").upsert({
@@ -1690,50 +1704,6 @@ async def op_stat_count_input(message: types.Message):
         reply_markup=build_operator_keyboard()
     )
 
-
-@dp.message(lambda m: m.chat.type == "private" and (m.text or "").lower().startswith("добавить оператора"))
-async def add_operator_handler(message: types.Message):
-    from supabase_db import supabase
-    text = message.text.strip()
-
-    username_match = re.search(r"@(\w+)", text)
-    pc_match = re.search(r"ПК[:\s]+(\S+)", text, re.IGNORECASE)
-    id_match = re.search(r"\bid(\s*)[:\s]+(\d+)", text, re.IGNORECASE)
-
-    if not username_match and not id_match:
-        await message.answer(
-            "❌ Укажи username или ID. Примеры:\n"
-            "добавить оператора @username ПК:D3\n"
-            "добавить оператора ID:123456789 ПК:D3"
-        )
-        return
-
-    pc_name = pc_match.group(1) if pc_match else "-"
-
-    if id_match:
-        telegram_id = int(id_match.group(2))
-        username = username_match.group(1) if username_match else str(telegram_id)
-    else:
-        username = username_match.group(1)
-        await message.answer(
-            f"❌ Укажи ID оператора.\n\n"
-            f"Формат:\nдобавить оператора @{username} ID:123456789 ПК:{pc_name}\n\n"
-            f"ID узнай через @userinfobot — перешли туда любое сообщение оператора."
-        )
-        return
-
-    try:
-        await asyncio.to_thread(
-            lambda: supabase.table("operators").upsert({
-                "telegram_id": telegram_id,
-                "username": username,
-                "pc_name": pc_name,
-                "active": True,
-            }, on_conflict="telegram_id").execute()
-        )
-        await message.answer(f"✅ Оператор @{username} (ПК: {pc_name}, ID: {telegram_id}) добавлен!")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка сохранения: {e}")
 
 
 async def main():
