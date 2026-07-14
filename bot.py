@@ -607,6 +607,18 @@ async def set_timer_start(message: types.Message, state: FSMContext):
         reply_markup=build_timer_channel_keyboard(channels)
     )
 
+@dp.message(lambda m: m.chat.type == "private" and (m.text or "").lower().startswith("добавить оператора"))
+async def add_operator_handler(message: types.Message):
+    ...
+
+@dp.message(lambda m: m.chat.type == "private" and (m.text or "").lower().strip() in ("список операторов", "операторы"))
+async def list_operators_handler(message: types.Message):
+    ...
+
+@dp.message(lambda m: m.chat.type == "private" and (m.text or "").lower().startswith("удалить оператора"))
+async def remove_operator_handler(message: types.Message):
+    ...
+
 @dp.message(StateFilter(None))
 async def admin_chat(message: types.Message):
     # Игнорируем сообщения из каналов и групп — только личка
