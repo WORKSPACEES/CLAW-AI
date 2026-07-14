@@ -694,7 +694,7 @@ async def remove_operator_handler(message: types.Message):
     username = username_match.group(1)
     try:
         await asyncio.to_thread(
-            lambda: supabase.table("operators").update({"active": False}).eq("username", username).execute()
+            lambda: supabase.table("operators").delete().eq("username", username).execute()
         )
         await message.answer(f"✅ Оператор @{username} удалён.")
     except Exception as e:
