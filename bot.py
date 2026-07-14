@@ -40,6 +40,9 @@ from supabase_db import (
 )
 load_dotenv()
 
+# ─── operator_states — состояние опроса операторов ───────────────────────────
+operator_poll_state = {}  # {telegram_id: {"step": ..., "zahody": 0, "broni": 0, "razvoroty": 0, "slot": ...}}
+
 class TimerSetup(StatesGroup):
     choosing_channel = State()
     waiting_day_time = State()
@@ -1511,6 +1514,176 @@ async def channel_post_handler(message: types.Message):
     except Exception as e:
         print("❌ channel_post_handler SAVE ERROR:", e)
 
+def build_operator_keyboard():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📥 Заход", callback_data="op_stat:zahod"),
+                InlineKeyboardButton(text="📋 Бронь", callback_data="op_stat:bron"),
+                InlineKeyboardButton(text="🔄 Разворот", callback_data="op_stat:razvorot"),
+            ],
+            [
+                InlineKeyboardButton(text="✅ Готово", callback_data="op_stat:done"),
+            ]
+        ]
+    )
+
+
+@dp.callback_query(lambda c: c.data.startswith("op_stat:"))
+async def op_stat_callback(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    action = callback.data.split(":")[1]
+
+    if action == "done":
+        state = operator_poll_state.get(user_id)
+        if not state:
+            await callback.answer("Нет активного опроса", show_alert=True)
+            return
+
+        # Сохраняем в Supabase
+        from supabase_db import supabase
+        slot = state.get("slot", "unknown")
+        pc_name = state.get("pc_name", "-")
+        try:
+            await asyncio.to_thread(
+                lambda: supabase.table("operator_stats").upsert({
+                    "telegram_id": user_id,
+                    "pc_name": pc_name,
+                    "shift_slot": slot,
+                    "zahody": state.get("zahody", 0),
+                    "broni": state.get("broni", 0),
+                    "razvoroty": state.get("razvoroty", 0),
+                }, on_conflict="shift_slot").execute()
+            )
+        except Exception as e:
+            print("❌ op_stat save ERROR:", e)
+
+        del operator_poll_state[user_id]
+        await callback.message.edit_text(
+            f"✅ Записано:\n"
+            f"📥 Заходы: {state.get('zahody', 0)}\n"
+            f"📋 Брони: {state.get('broni', 0)}\n"
+            f"🔄 Развороты: {state.get('razvoroty', 0)}"
+        )
+        await callback.answer()
+        return
+
+    # Спрашиваем количество
+    labels = {"zahod": "заходов", "bron": "броней", "razvorot": "разворотов"}
+    label = labels.get(action, action)
+
+    if user_id not in operator_poll_state:
+        operator_poll_state[user_id] = {"zahody": 0, "broni": 0, "razvoroty": 0}
+
+    operator_poll_state[user_id]["waiting_for"] = action
+    await callback.answer()
+    await callback.message.answer(f"Сколько {label}? Введи цифру:")
+
+
+@dp.message(lambda m: m.chat.type == "private" and m.from_user.id in operator_poll_state and operator_poll_state[m.from_user.id].get("waiting_for"))
+async def op_stat_count_input(message: types.Message):
+    user_id = message.from_user.id
+    state = operator_poll_state[user_id]
+    action = state.get("waiting_for")
+
+    try:
+        count = int(message.text.strip())
+    except ValueError:
+        await message.answer("❌ Введи число, например: 3")
+        return
+
+    key_map = {"zahod": "zahody", "bron": "broni", "razvorot": "razvoroty"}
+    label_map = {"zahod": "заходов", "bron": "броней", "razvorot": "разворотов"}
+
+    key = key_map.get(action)
+    if key:
+        state[key] = count
+
+    state["waiting_for"] = None
+
+    await message.answer(
+        f"✅ {label_map.get(action, action)}: {count}\n\n"
+        f"📥 Заходы: {state.get('zahody', 0)}\n"
+        f"📋 Брони: {state.get('broni', 0)}\n"
+        f"🔄 Развороты: {state.get('razvoroty', 0)}\n\n"
+        "Нажми ещё кнопку или ✅ Готово",
+        reply_markup=build_operator_keyboard()
+    )
+
+
+@dp.message(lambda m: m.chat.type == "private" and (m.text or "").lower().startswith("добавить оператора"))
+async def add_operator_handler(message: types.Message):
+    from supabase_db import supabase
+    text = message.text.strip()
+
+    # Формат: добавить оператора @username ПК:D3
+    username_match = re.search(r"@(\w+)", text)
+    pc_match = re.search(r"ПК[:\s]+(\S+)", text, re.IGNORECASE)
+
+    if not username_match:
+        await message.answer("❌ Укажи username. Пример:\nдобавить оператора @username ПК:D3")
+        return
+
+    username = username_match.group(1)
+    pc_name = pc_match.group(1) if pc_match else "-"
+
+    # Ищем telegram_id по username через getChat
+    try:
+        chat = await bot.get_chat(f"@{username}")
+        telegram_id = chat.id
+    except Exception as e:
+        await message.answer(f"❌ Не могу найти пользователя @{username}: {e}")
+        return
+
+    try:
+        await asyncio.to_thread(
+            lambda: supabase.table("operators").upsert({
+                "telegram_id": telegram_id,
+                "username": username,
+                "pc_name": pc_name,
+                "active": True,
+            }, on_conflict="telegram_id").execute()
+        )
+        await message.answer(f"✅ Оператор @{username} (ПК: {pc_name}) добавлен!")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка сохранения: {e}")
+
+
+@dp.message(lambda m: m.chat.type == "private" and (m.text or "").lower().strip() in ("список операторов", "операторы"))
+async def list_operators_handler(message: types.Message):
+    from supabase_db import supabase
+    result = await asyncio.to_thread(
+        lambda: supabase.table("operators").select("*").eq("active", True).execute()
+    )
+    ops = result.data or []
+    if not ops:
+        await message.answer("Операторов нет. Добавь: добавить оператора @username ПК:D3")
+        return
+
+    lines = ["👥 Операторы:"]
+    for op in ops:
+        lines.append(f"• @{op.get('username')} — ПК: {op.get('pc_name')} (ID: {op.get('telegram_id')})")
+    await message.answer("\n".join(lines))
+
+@dp.message(lambda m: m.chat.type == "private" and (m.text or "").lower().startswith("удалить оператора"))
+async def remove_operator_handler(message: types.Message):
+    from supabase_db import supabase
+    text = message.text.strip()
+
+    username_match = re.search(r"@(\w+)", text)
+    if not username_match:
+        await message.answer("❌ Укажи username. Пример:\nудалить оператора @username")
+        return
+
+    username = username_match.group(1)
+
+    try:
+        await asyncio.to_thread(
+            lambda: supabase.table("operators").update({"active": False}).eq("username", username).execute()
+        )
+        await message.answer(f"✅ Оператор @{username} удалён.")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
 
 async def main():
     print("BOT STARTED")
