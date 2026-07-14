@@ -153,6 +153,18 @@ def build_report_text(with_ai=False):
 
 @dp.message(CommandStart())
 async def start(message: types.Message):
+    try:
+        from supabase_db import supabase
+        await asyncio.to_thread(
+            lambda: supabase.table("known_users").upsert({
+                "telegram_id": message.from_user.id,
+                "username": message.from_user.username or "",
+                "first_name": message.from_user.first_name or "",
+            }, on_conflict="telegram_id").execute()
+        )
+    except Exception:
+        pass
+
     await message.answer(
         "✅ ANALIZATOR запущен.\n\n"
         "Можешь писать мне обычным текстом:\n"
