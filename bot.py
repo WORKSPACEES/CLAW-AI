@@ -275,6 +275,10 @@ def report_keyboard(session_name):
                 InlineKeyboardButton(
                     text="📖 Развёрнутый отчёт",
                     callback_data=f"full_report_account:{session_name}"
+                ),
+                InlineKeyboardButton(
+                    text="🗑 Удалить",
+                    callback_data=f"delete_report_msg:{session_name}"
                 )
             ]
         ]
@@ -397,6 +401,14 @@ async def full_report_callback(callback: types.CallbackQuery):
     except Exception as e:
         print("FULL REPORT CALLBACK ERROR:", e)
         await callback.answer("Ошибка развёрнутого отчёта", show_alert=True)
+
+@dp.callback_query(lambda c: c.data.startswith("delete_report_msg:"))
+async def delete_report_msg_callback(callback: types.CallbackQuery):
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        print("DELETE MSG ERROR:", e)
+        await callback.answer("Не удалось удалить", show_alert=True)
 
 @dp.callback_query(lambda c: c.data.startswith("pick_channel:"))
 async def pick_channel_callback(callback: types.CallbackQuery):
