@@ -1616,24 +1616,36 @@ async def add_operator_handler(message: types.Message):
     from supabase_db import supabase
     text = message.text.strip()
 
-    # Формат: добавить оператора @username ПК:D3
     username_match = re.search(r"@(\w+)", text)
     pc_match = re.search(r"ПК[:\s]+(\S+)", text, re.IGNORECASE)
+    id_match = re.search(r"\bid(\s*)[:\s]+(\d+)", text, re.IGNORECASE)
 
-    if not username_match:
-        await message.answer("❌ Укажи username. Пример:\nдобавить оператора @username ПК:D3")
+    if not username_match and not id_match:
+        await message.answer(
+            "❌ Укажи username или ID. Примеры:\n"
+            "добавить оператора @username ПК:D3\n"
+            "добавить оператора ID:123456789 ПК:D3"
+        )
         return
 
-    username = username_match.group(1)
     pc_name = pc_match.group(1) if pc_match else "-"
 
-    # Ищем telegram_id по username через getChat
-    try:
-        chat = await bot.get_chat(f"@{username}")
-        telegram_id = chat.id
-    except Exception as e:
-        await message.answer(f"❌ Не могу найти пользователя @{username}: {e}")
-        return
+    if id_match:
+        telegram_id = int(id_match.group(2))
+        username = username_match.group(1) if username_match else str(telegram_id)
+    else:
+        username = username_match.group(1)
+        try:
+            chat = await bot.get_chat(f"@{username}")
+            telegram_id = chat.id
+        except Exception:
+            await message.answer(
+                f"❌ Не могу найти @{username} автоматически.\n\n"
+                f"Попробуй добавить по ID:\n"
+                f"добавить оператора @{username} ID:123456789 ПК:{pc_name}\n\n"
+                f"ID можно узнать через @userinfobot"
+            )
+            return
 
     try:
         await asyncio.to_thread(
@@ -1644,7 +1656,7 @@ async def add_operator_handler(message: types.Message):
                 "active": True,
             }, on_conflict="telegram_id").execute()
         )
-        await message.answer(f"✅ Оператор @{username} (ПК: {pc_name}) добавлен!")
+        await message.answer(f"✅ Оператор @{username} (ПК: {pc_name}, ID: {telegram_id}) добавлен!")
     except Exception as e:
         await message.answer(f"❌ Ошибка сохранения: {e}")
 
