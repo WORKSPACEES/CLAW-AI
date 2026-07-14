@@ -609,15 +609,70 @@ async def set_timer_start(message: types.Message, state: FSMContext):
 
 @dp.message(lambda m: m.chat.type == "private" and (m.text or "").lower().startswith("добавить оператора"))
 async def add_operator_handler(message: types.Message):
-    ...
+    from supabase_db import supabase
+    text = message.text.strip()
+    username_match = re.search(r"@(\w+)", text)
+    pc_match = re.search(r"ПК[:\s]+(\S+)", text, re.IGNORECASE)
+    id_match = re.search(r"\bid(\s*)[:\s]+(\d+)", text, re.IGNORECASE)
+    if not username_match and not id_match:
+        await message.answer("❌ Укажи username или ID. Примеры:\nдобавить оператора @username ПК:D3\nдобавить оператора ID:123456789 ПК:D3")
+        return
+    pc_name = pc_match.group(1) if pc_match else "-"
+    if id_match:
+        telegram_id = int(id_match.group(2))
+        username = username_match.group(1) if username_match else str(telegram_id)
+    else:
+        username = username_match.group(1)
+        try:
+            chat = await bot.get_chat(f"@{username}")
+            telegram_id = chat.id
+        except Exception:
+            await message.answer(f"❌ Не могу найти @{username} автоматически.\n\nПопробуй добавить по ID:\nдобавить оператора @{username} ID:123456789 ПК:{pc_name}\n\nID можно узнать через @userinfobot")
+            return
+    try:
+        await asyncio.to_thread(
+            lambda: supabase.table("operators").upsert({
+                "telegram_id": telegram_id,
+                "username": username,
+                "pc_name": pc_name,
+                "active": True,
+            }, on_conflict="telegram_id").execute()
+        )
+        await message.answer(f"✅ Оператор @{username} (ПК: {pc_name}, ID: {telegram_id}) добавлен!")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка сохранения: {e}")
 
 @dp.message(lambda m: m.chat.type == "private" and (m.text or "").lower().strip() in ("список операторов", "операторы"))
 async def list_operators_handler(message: types.Message):
-    ...
+    from supabase_db import supabase
+    result = await asyncio.to_thread(
+        lambda: supabase.table("operators").select("*").eq("active", True).execute()
+    )
+    ops = result.data or []
+    if not ops:
+        await message.answer("Операторов нет. Добавь: добавить оператора @username ПК:D3")
+        return
+    lines = ["👥 Операторы:"]
+    for op in ops:
+        lines.append(f"• @{op.get('username')} — ПК: {op.get('pc_name')} (ID: {op.get('telegram_id')})")
+    await message.answer("\n".join(lines))
 
 @dp.message(lambda m: m.chat.type == "private" and (m.text or "").lower().startswith("удалить оператора"))
 async def remove_operator_handler(message: types.Message):
-    ...
+    from supabase_db import supabase
+    text = message.text.strip()
+    username_match = re.search(r"@(\w+)", text)
+    if not username_match:
+        await message.answer("❌ Укажи username. Пример:\nудалить оператора @username")
+        return
+    username = username_match.group(1)
+    try:
+        await asyncio.to_thread(
+            lambda: supabase.table("operators").update({"active": False}).eq("username", username).execute()
+        )
+        await message.answer(f"✅ Оператор @{username} удалён.")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
 
 @dp.message(StateFilter(None))
 async def admin_chat(message: types.Message):
@@ -1493,6 +1548,7 @@ async def load_history_command(message: types.Message):
         print("❌ LOAD HISTORY ERROR:", e)
         await message.answer(f"❌ Ошибка загрузки истории: {e}")
 
+
 @dp.channel_post()
 async def channel_post_handler(message: types.Message):
     print("CHANNEL ID:", message.chat.id)
@@ -1672,42 +1728,6 @@ async def add_operator_handler(message: types.Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка сохранения: {e}")
 
-
-@dp.message(lambda m: m.chat.type == "private" and (m.text or "").lower().strip() in ("список операторов", "операторы"))
-async def list_operators_handler(message: types.Message):
-    from supabase_db import supabase
-    result = await asyncio.to_thread(
-        lambda: supabase.table("operators").select("*").eq("active", True).execute()
-    )
-    ops = result.data or []
-    if not ops:
-        await message.answer("Операторов нет. Добавь: добавить оператора @username ПК:D3")
-        return
-
-    lines = ["👥 Операторы:"]
-    for op in ops:
-        lines.append(f"• @{op.get('username')} — ПК: {op.get('pc_name')} (ID: {op.get('telegram_id')})")
-    await message.answer("\n".join(lines))
-
-@dp.message(lambda m: m.chat.type == "private" and (m.text or "").lower().startswith("удалить оператора"))
-async def remove_operator_handler(message: types.Message):
-    from supabase_db import supabase
-    text = message.text.strip()
-
-    username_match = re.search(r"@(\w+)", text)
-    if not username_match:
-        await message.answer("❌ Укажи username. Пример:\nудалить оператора @username")
-        return
-
-    username = username_match.group(1)
-
-    try:
-        await asyncio.to_thread(
-            lambda: supabase.table("operators").update({"active": False}).eq("username", username).execute()
-        )
-        await message.answer(f"✅ Оператор @{username} удалён.")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
 
 async def main():
     print("BOT STARTED")
