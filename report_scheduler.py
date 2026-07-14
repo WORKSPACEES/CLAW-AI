@@ -123,6 +123,61 @@ async def send_shift_report(report_time, target_channel_id=None):
     print("Смена:", shift_name)
     print("Период:", start_time, "—", end_time)
 
+    slot_id = f"{target_channel_id}__{report_time.strftime('%Y-%m-%d_%H:%M')}"
+
+    # ── Опрашиваем операторов ────────────────────────────────────────────────
+    try:
+        ops_result = supabase.table("operators").select("*").eq("active", True).execute()
+        operators = ops_result.data or []
+
+        for op in operators:
+            tg_id = op.get("telegram_id")
+            pc_name = op.get("pc_name", "-")
+            username = op.get("username", "")
+
+            if not tg_id:
+                continue
+
+            from bot import operator_poll_state, build_operator_keyboard
+            operator_poll_state[tg_id] = {
+                "zahody": 0,
+                "broni": 0,
+                "razvoroty": 0,
+                "waiting_for": None,
+                "slot": slot_id,
+                "pc_name": pc_name,
+            }
+
+            try:
+                await bot.send_message(
+                    chat_id=tg_id,
+                    text=(
+                        f"📊 Смена завершена ({shift_name})\n"
+                        f"Заполни статистику по ПК: {pc_name}\n\n"
+                        "Нажми кнопку и введи количество:"
+                    ),
+                    reply_markup=build_operator_keyboard()
+                )
+            except Exception as e:
+                print(f"❌ Не смог написать оператору @{username} ({tg_id}): {e}")
+
+        # Ждём 3 минуты пока операторы заполнят
+        if operators:
+            print("⏳ Жду ответов операторов (10 мин)...")
+            await asyncio.sleep(600)
+
+    except Exception as e:
+        print("❌ Ошибка опроса операторов:", e)
+
+    # ── Собираем статистику операторов из БД ─────────────────────────────────
+    try:
+        stats_result = supabase.table("operator_stats").select("*").eq("shift_slot", slot_id).execute()
+        operator_stats = {row["pc_name"]: row for row in (stats_result.data or [])}
+    except Exception as e:
+        print("❌ Ошибка загрузки operator_stats:", e)
+        operator_stats = {}
+
+    # ── Строим и отправляем отчёты ───────────────────────────────────────────
     try:
         reports = build_reports_by_accounts(
             start_time=start_time,
@@ -131,7 +186,6 @@ async def send_shift_report(report_time, target_channel_id=None):
             detailed=False,
         )
 
-        # Загружаем привязки аккаунт → канал
         account_channels = {
             row["session_name"]: row
             for row in get_all_account_channels()
@@ -145,13 +199,24 @@ async def send_shift_report(report_time, target_channel_id=None):
         for report in reports:
             session_name = report["session_name"]
             channel = account_channels.get(session_name)
-
-            # Если есть привязка — шлём в свой канал, иначе в дефолтный
             target_chat = channel["channel_id"] if channel else (target_channel_id or REPORT_CHAT_ID)
+
+            # Получаем pc_name для этого аккаунта
+            acc_result = supabase.table("telegram_accounts").select("pc_name").eq("session_name", session_name).limit(1).execute()
+            pc_name = (acc_result.data or [{}])[0].get("pc_name", "-") if acc_result.data else "-"
+
+            # Добавляем статистику оператора (всегда, даже если 0)
+            op_stat = operator_stats.get(pc_name) or {}
+            report_text = report["text"]
+            report_text += (
+                f"\n\nЗаходы: {op_stat.get('zahody', 0)} | "
+                f"Брони: {op_stat.get('broni', 0)} | "
+                f"Развороты: {op_stat.get('razvoroty', 0)}"
+            )
 
             await bot.send_message(
                 target_chat,
-                report["text"],
+                report_text,
                 reply_markup=report_keyboard(session_name)
             )
 
