@@ -750,31 +750,30 @@ async def op_stat_count_input(message: types.Message):
 
 @dp.message(Command("testreport"))
 async def test_report(message: types.Message):
-    from supabase_db import supabase
+    from supabase_db import get_bot_channels
 
-    test_data = {
-        "telegram_id": message.from_user.id,
-        "pc_name": "TEST_PC",
-        "shift_slot": "test_slot",
-        "zahody": 5,
-        "broni": 3,
-        "razvoroty": 1,
-    }
+    channels = await asyncio.to_thread(get_bot_channels, "default")
 
-    # Пишем в канал если есть REPORT_CHAT_ID
+    if not channels:
+        await message.answer("❌ Нет подключённых каналов. Напиши claw в нужном канале.")
+        return
+
     report_text = (
-        f"📊 Отчёт оператора [ТЕСТ]\n\n"
-        f"🖥 ПК: {test_data['pc_name']}\n"
-        f"📥 Заходы: {test_data['zahody']}\n"
-        f"📋 Брони: {test_data['broni']}\n"
-        f"🔄 Развороты: {test_data['razvoroty']}"
+        "📊 Отчёт оператора [ТЕСТ]\n\n"
+        "🖥 ПК: TEST_PC\n"
+        "📥 Заходы: 5\n"
+        "📋 Брони: 3\n"
+        "🔄 Развороты: 1"
     )
 
-    if REPORT_CHAT_ID:
-        await bot.send_message(int(REPORT_CHAT_ID), report_text)
-        await message.answer("✅ Тестовый отчёт отправлен в канал!")
-    else:
-        await message.answer(f"⚠️ REPORT_CHAT_ID не задан. Вот что бы ушло:\n\n{report_text}")
+    for ch in channels:
+        channel_id = int(ch["channel_id"])
+        channel_title = ch.get("channel_title", channel_id)
+        try:
+            await bot.send_message(channel_id, report_text)
+            await message.answer(f"✅ Отправлено в «{channel_title}»")
+        except Exception as e:
+            await message.answer(f"❌ Ошибка для «{channel_title}»: {e}")
 
 
 @dp.message(StateFilter(None))
