@@ -751,29 +751,58 @@ async def op_stat_count_input(message: types.Message):
 @dp.message(Command("testreport"))
 async def test_report(message: types.Message):
     from supabase_db import get_bot_channels
+    from dialog_report import build_reports_by_accounts, get_current_shift_period
+
+    user_id = message.from_user.id
+
+    # Берём статистику оператора если он заполнял через /testpoll
+    op_stat = operator_poll_state.get(user_id, {})
+    zahody = op_stat.get("zahody", 0)
+    broni = op_stat.get("broni", 0)
+    razvoroty = op_stat.get("razvoroty", 0)
 
     channels = await asyncio.to_thread(get_bot_channels, "default")
-
     if not channels:
         await message.answer("❌ Нет подключённых каналов. Напиши claw в нужном канале.")
         return
 
-    report_text = (
-        "📊 Отчёт оператора [ТЕСТ]\n\n"
-        "🖥 ПК: TEST_PC\n"
-        "📥 Заходы: 5\n"
-        "📋 Брони: 3\n"
-        "🔄 Развороты: 1"
+    await message.answer("⏳ Собираю отчёт за текущую смену...")
+
+    period = get_current_shift_period()
+    reports = await asyncio.to_thread(
+        build_reports_by_accounts,
+        period["start_time"],
+        period["end_time"],
+        period["shift_name"],
+        False,
     )
+
+    if not reports:
+        await message.answer("За текущую смену диалогов нет.")
+        return
 
     for ch in channels:
         channel_id = int(ch["channel_id"])
-        channel_title = ch.get("channel_title", channel_id)
-        try:
-            await bot.send_message(channel_id, report_text)
-            await message.answer(f"✅ Отправлено в «{channel_title}»")
-        except Exception as e:
-            await message.answer(f"❌ Ошибка для «{channel_title}»: {e}")
+        channel_title = ch.get("channel_title", str(channel_id))
+
+        for report in reports:
+            report_text = report["text"]
+            report_text += (
+                f"\n\nЗаходы: {zahody} | "
+                f"Брони: {broni} | "
+                f"Развороты: {razvoroty}"
+            )
+            try:
+                await bot.send_message(
+                    channel_id,
+                    report_text,
+                    reply_markup=report_keyboard(report["session_name"])
+                )
+            except Exception as e:
+                await message.answer(f"❌ Ошибка для «{channel_title}»: {e}")
+                return
+
+        await message.answer(f"✅ Тестовый отчёт отправлен в «{channel_title}»")
 
 
 @dp.message(StateFilter(None))
