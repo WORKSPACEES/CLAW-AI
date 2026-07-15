@@ -717,6 +717,37 @@ async def test_poll(message: types.Message):
         reply_markup=build_operator_keyboard()
     )
 
+@dp.message(lambda m: m.chat.type == "private" and m.from_user.id in operator_poll_state and operator_poll_state[m.from_user.id].get("waiting_for"))
+async def op_stat_count_input(message: types.Message):
+    user_id = message.from_user.id
+    state = operator_poll_state[user_id]
+    action = state.get("waiting_for")
+
+    try:
+        count = int(message.text.strip())
+    except ValueError:
+        await message.answer("❌ Введи число, например: 3")
+        return
+
+    key_map = {"zahod": "zahody", "bron": "broni", "razvorot": "razvoroty"}
+    label_map = {"zahod": "заходов", "bron": "броней", "razvorot": "разворотов"}
+
+    key = key_map.get(action)
+    if key:
+        state[key] = count
+
+    state["waiting_for"] = None
+
+    await message.answer(
+        f"✅ {label_map.get(action, action)}: {count}\n\n"
+        f"📥 Заходы: {state.get('zahody', 0)}\n"
+        f"📋 Брони: {state.get('broni', 0)}\n"
+        f"🔄 Развороты: {state.get('razvoroty', 0)}\n\n"
+        "Нажми ещё кнопку или ✅ Готово",
+        reply_markup=build_operator_keyboard()
+    )
+
+
 
 @dp.message(StateFilter(None))
 async def admin_chat(message: types.Message):
@@ -1696,35 +1727,7 @@ async def op_stat_callback(callback: types.CallbackQuery):
     await callback.message.answer(f"Сколько {label}? Введи цифру:")
 
 
-@dp.message(lambda m: m.chat.type == "private" and m.from_user.id in operator_poll_state and operator_poll_state[m.from_user.id].get("waiting_for"))
-async def op_stat_count_input(message: types.Message):
-    user_id = message.from_user.id
-    state = operator_poll_state[user_id]
-    action = state.get("waiting_for")
 
-    try:
-        count = int(message.text.strip())
-    except ValueError:
-        await message.answer("❌ Введи число, например: 3")
-        return
-
-    key_map = {"zahod": "zahody", "bron": "broni", "razvorot": "razvoroty"}
-    label_map = {"zahod": "заходов", "bron": "броней", "razvorot": "разворотов"}
-
-    key = key_map.get(action)
-    if key:
-        state[key] = count
-
-    state["waiting_for"] = None
-
-    await message.answer(
-        f"✅ {label_map.get(action, action)}: {count}\n\n"
-        f"📥 Заходы: {state.get('zahody', 0)}\n"
-        f"📋 Брони: {state.get('broni', 0)}\n"
-        f"🔄 Развороты: {state.get('razvoroty', 0)}\n\n"
-        "Нажми ещё кнопку или ✅ Готово",
-        reply_markup=build_operator_keyboard()
-    )
 
 
 
