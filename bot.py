@@ -748,6 +748,34 @@ async def op_stat_count_input(message: types.Message):
     )
 
 
+@dp.message(Command("testreport"))
+async def test_report(message: types.Message):
+    from supabase_db import supabase
+
+    test_data = {
+        "telegram_id": message.from_user.id,
+        "pc_name": "TEST_PC",
+        "shift_slot": "test_slot",
+        "zahody": 5,
+        "broni": 3,
+        "razvoroty": 1,
+    }
+
+    # Пишем в канал если есть REPORT_CHAT_ID
+    report_text = (
+        f"📊 Отчёт оператора [ТЕСТ]\n\n"
+        f"🖥 ПК: {test_data['pc_name']}\n"
+        f"📥 Заходы: {test_data['zahody']}\n"
+        f"📋 Брони: {test_data['broni']}\n"
+        f"🔄 Развороты: {test_data['razvoroty']}"
+    )
+
+    if REPORT_CHAT_ID:
+        await bot.send_message(REPORT_CHAT_ID, report_text)
+        await message.answer("✅ Тестовый отчёт отправлен в канал!")
+    else:
+        await message.answer(f"⚠️ REPORT_CHAT_ID не задан. Вот что бы ушло:\n\n{report_text}")
+
 
 @dp.message(StateFilter(None))
 async def admin_chat(message: types.Message):
