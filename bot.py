@@ -771,7 +771,7 @@ async def test_report(message: types.Message):
     )
 
     if REPORT_CHAT_ID:
-        await bot.send_message(REPORT_CHAT_ID, report_text)
+        await bot.send_message(int(REPORT_CHAT_ID), report_text)
         await message.answer("✅ Тестовый отчёт отправлен в канал!")
     else:
         await message.answer(f"⚠️ REPORT_CHAT_ID не задан. Вот что бы ушло:\n\n{report_text}")
