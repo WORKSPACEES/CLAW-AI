@@ -700,6 +700,24 @@ async def remove_operator_handler(message: types.Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
+@dp.message(Command("testpoll"))
+async def test_poll(message: types.Message):
+    user_id = message.from_user.id
+    operator_poll_state[user_id] = {
+        "zahody": 0,
+        "broni": 0,
+        "razvoroty": 0,
+        "slot": "test_slot",
+        "pc_name": "TEST_PC",
+        "waiting_for": None,
+    }
+    await message.answer(
+        "🧪 [ТЕСТ] Опрос оператора запущен вручную.\n\n"
+        "Нажми кнопку → введи цифру → нажми ✅ Готово",
+        reply_markup=build_operator_keyboard()
+    )
+
+
 @dp.message(StateFilter(None))
 async def admin_chat(message: types.Message):
     # Игнорируем сообщения из каналов и групп — только личка
@@ -1708,26 +1726,6 @@ async def op_stat_count_input(message: types.Message):
         reply_markup=build_operator_keyboard()
     )
 
-
-@dp.message(Command("testpoll"))
-async def test_poll(message: types.Message):
-    user_id = message.from_user.id
-    
-    # Инициализируем состояние как будто бот сам спросил
-    operator_poll_state[user_id] = {
-        "zahody": 0,
-        "broni": 0,
-        "razvoroty": 0,
-        "slot": "test_slot",
-        "pc_name": "TEST_PC",
-        "waiting_for": None,
-    }
-    
-    await message.answer(
-        "🧪 [ТЕСТ] Опрос оператора запущен вручную.\n\n"
-        "Нажми кнопку → введи цифру → нажми ✅ Готово",
-        reply_markup=build_operator_keyboard()
-    )
 
 
 async def main():
