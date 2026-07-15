@@ -68,33 +68,42 @@ def set_last_sent_slot(slot_id: str):
 
 
 def get_all_due_slots(now):
-    """
-    Возвращает список (slot_id, slot_time, channel_id) для всех каналов
-    у которых есть настройки таймера и чей слот уже наступил.
-    Если для канала нет настроек — использует дефолт 9:00 / 21:00.
-    """
     settings_list = get_all_timer_settings()
 
-    # Если нет ни одной настройки — дефолтный режим (один канал REPORT_CHAT_ID)
     if not settings_list:
         settings_list = [{
             "channel_id": REPORT_CHAT_ID,
             "channel_title": "default",
-            "day_hour": 21,
-            "day_minute": 0,
-            "night_hour": 9,
-            "night_minute": 0,
+            "day_hour": 20,
+            "day_minute": 40,
+            "night_hour": 8,
+            "night_minute": 40,
+            "poll_hour": 20,
+            "poll_minute": 30,
         }]
 
     due = []
     for s in settings_list:
         channel_id = s["channel_id"]
+        poll_hour = s.get("poll_hour", 20)
+        poll_minute = s.get("poll_minute", 30)
+
+        # Вычисляем poll_slot_id для привязки к отчётам
+        poll_time = now.replace(hour=poll_hour, minute=poll_minute, second=0, microsecond=0)
+        if now < poll_time:
+            poll_time -= timedelta(days=1)
+        poll_slot_id = f"{channel_id}__poll__{poll_time.strftime('%Y-%m-%d_%H:%M')}"
+
+        # Слоты отчёта (день и ночь)
         for hour, minute in [(s["day_hour"], s["day_minute"]), (s["night_hour"], s["night_minute"])]:
             slot_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
             if now < slot_time:
                 slot_time -= timedelta(days=1)
             slot_id = f"{channel_id}__{slot_time.strftime('%Y-%m-%d_%H:%M')}"
-            due.append((slot_id, slot_time, channel_id))
+            due.append((slot_id, slot_time, channel_id, "report", poll_slot_id))
+
+        # Слот опроса операторов
+        due.append((poll_slot_id, poll_time, channel_id, "poll", None))
 
     return due
 
@@ -115,7 +124,7 @@ def get_shift_for_report(report_time):
     return start_time, end_time, shift_name
 
 
-async def send_shift_report(report_time, target_channel_id=None):
+async def send_shift_report(report_time, target_channel_id=None, poll_slot_id=None):
     start_time, end_time, shift_name = get_shift_for_report(report_time)
 
     print("=" * 50)
@@ -123,51 +132,8 @@ async def send_shift_report(report_time, target_channel_id=None):
     print("Смена:", shift_name)
     print("Период:", start_time, "—", end_time)
 
-    slot_id = f"{target_channel_id}__{report_time.strftime('%Y-%m-%d_%H:%M')}"
-
-    # ── Опрашиваем операторов ────────────────────────────────────────────────
-    try:
-        ops_result = supabase.table("operators").select("*").eq("active", True).execute()
-        operators = ops_result.data or []
-
-        for op in operators:
-            tg_id = op.get("telegram_id")
-            pc_name = op.get("pc_name", "-")
-            username = op.get("username", "")
-
-            if not tg_id:
-                continue
-
-            from bot import operator_poll_state, build_operator_keyboard
-            operator_poll_state[tg_id] = {
-                "zahody": 0,
-                "broni": 0,
-                "razvoroty": 0,
-                "waiting_for": None,
-                "slot": slot_id,
-                "pc_name": pc_name,
-            }
-
-            try:
-                await bot.send_message(
-                    chat_id=tg_id,
-                    text=(
-                        f"📊 Смена завершена ({shift_name})\n"
-                        f"Заполни статистику по ПК: {pc_name}\n\n"
-                        "Нажми кнопку и введи количество:"
-                    ),
-                    reply_markup=build_operator_keyboard()
-                )
-            except Exception as e:
-                print(f"❌ Не смог написать оператору @{username} ({tg_id}): {e}")
-
-        # Ждём 3 минуты пока операторы заполнят
-        if operators:
-            print("⏳ Жду ответов операторов (10 мин)...")
-            await asyncio.sleep(600)
-
-    except Exception as e:
-        print("❌ Ошибка опроса операторов:", e)
+    # slot_id для поиска статистики операторов — берём из poll слота
+    slot_id = poll_slot_id or f"{target_channel_id}__poll__{report_time.strftime('%Y-%m-%d_%H:%M')}"
 
     # ── Собираем статистику операторов из БД ─────────────────────────────────
     try:
@@ -215,7 +181,7 @@ async def send_shift_report(report_time, target_channel_id=None):
             )
 
             await bot.send_message(
-                target_chat,
+                int(target_chat),
                 report_text,
                 reply_markup=report_keyboard(session_name)
             )
@@ -226,7 +192,54 @@ async def send_shift_report(report_time, target_channel_id=None):
 
     except Exception as e:
         print("❌ Ошибка отправки отчёта:", e)
-        await bot.send_message(REPORT_CHAT_ID, f"❌ Ошибка отчёта: {e}")
+        await bot.send_message(int(REPORT_CHAT_ID), f"❌ Ошибка отчёта: {e}")
+
+
+async def poll_operators(slot_id, channel_id):
+    """Опрашивает операторов — пишет им кнопки."""
+    try:
+        ops_result = supabase.table("operators").select("*").eq("active", True).execute()
+        operators = ops_result.data or []
+
+        if not operators:
+            print("⚠️ Нет активных операторов для опроса")
+            return
+
+        from bot import operator_poll_state, build_operator_keyboard
+
+        for op in operators:
+            tg_id = op.get("telegram_id")
+            pc_name = op.get("pc_name", "-")
+            username = op.get("username", "")
+
+            if not tg_id:
+                continue
+
+            operator_poll_state[tg_id] = {
+                "zahody": 0,
+                "broni": 0,
+                "razvoroty": 0,
+                "waiting_for": None,
+                "slot": slot_id,
+                "pc_name": pc_name,
+            }
+
+            try:
+                await bot.send_message(
+                    chat_id=tg_id,
+                    text=(
+                        f"📊 Смена заканчивается!\n"
+                        f"Заполни статистику по ПК: {pc_name}\n\n"
+                        "Нажми кнопку и введи количество:"
+                    ),
+                    reply_markup=build_operator_keyboard()
+                )
+                print(f"✅ Написал оператору @{username} ({tg_id})")
+            except Exception as e:
+                print(f"❌ Не смог написать оператору @{username} ({tg_id}): {e}")
+
+    except Exception as e:
+        print("❌ poll_operators ERROR:", e)
 
 
 async def main():
@@ -237,15 +250,19 @@ async def main():
         now = datetime.now(KYIV_TZ)
         due_slots = get_all_due_slots(now)
 
-        for slot_id, slot_time, channel_id in due_slots:
+        for slot_id, slot_time, channel_id, slot_type, poll_slot_id in due_slots:
             last_sent = get_last_sent_slot_for(slot_id)
             if not last_sent:
                 print("=" * 50)
-                print("🔔 Неотправленный слот:", slot_id)
+                print(f"🔔 Слот: {slot_id} | Тип: {slot_type}")
                 print("Канал:", channel_id)
                 print("Сейчас:", now.strftime("%d.%m.%Y %H:%M:%S"))
 
-                await send_shift_report(slot_time, channel_id)
+                if slot_type == "poll":
+                    await poll_operators(slot_id, channel_id)
+                else:
+                    await send_shift_report(slot_time, channel_id, poll_slot_id=poll_slot_id)
+
                 set_last_sent_slot(slot_id)
 
         await asyncio.sleep(60)
