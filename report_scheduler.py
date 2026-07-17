@@ -183,15 +183,22 @@ async def send_shift_report(report_time, target_channel_id=None, poll_slot_id=No
             # Добавляем статистику оператора (всегда, даже если 0)
             op_stat = operator_stats.get(pc_name) or {}
             report_text = report["text"]
-            report_text += (
-                f"\n\nЗаходы: {op_stat.get('zahody', 0)} | "
-                f"Брони: {op_stat.get('broni', 0)} | "
-                f"Развороты: {op_stat.get('razvoroty', 0)}"
-            )
+            # СТАЛО:
+            zahody = op_stat.get('zahody', 0)
+            broni = op_stat.get('broni', 0)
+            razvoroty = op_stat.get('razvoroty', 0)
 
+            zahody_str = f"🟢 *Заходы: {zahody}*" if zahody > 0 else f"⚪️ Заходы: {zahody}"
+            broni_str = f"🔥 *Брони: {broni}*" if broni > 0 else f"⚪️ Брони: {broni}"
+            razvoroty_str = f"🔴 *Развороты: {razvoroty}*" if razvoroty > 0 else f"⚪️ Развороты: {razvoroty}"
+
+            report_text += f"\n\n{zahody_str} | {broni_str} | {razvoroty_str}"
+
+            # СТАЛО:
             await bot.send_message(
                 int(target_chat),
                 report_text,
+                parse_mode="Markdown",
                 reply_markup=report_keyboard(session_name)
             )
 
