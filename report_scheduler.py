@@ -74,9 +74,9 @@ def get_all_due_slots(now):
         settings_list = [{
             "channel_id": REPORT_CHAT_ID,
             "channel_title": "default",
-            "day_hour": 20,
+            "day_hour": 8,
             "day_minute": 40,
-            "night_hour": 8,
+            "night_hour": 20,
             "night_minute": 40,
             "poll_hour": 20,
             "poll_minute": 30,
@@ -100,10 +100,17 @@ def get_all_due_slots(now):
             if now < slot_time:
                 slot_time -= timedelta(days=1)
             slot_id = f"{channel_id}__{slot_time.strftime('%Y-%m-%d_%H:%M')}"
-            due.append((slot_id, slot_time, channel_id, "report", poll_slot_id))
 
-        # Слот опроса операторов
-        due.append((poll_slot_id, poll_time, channel_id, "poll", None))
+            # Ночной отчёт берёт poll за ПРЕДЫДУЩИЙ день
+            if hour < 12:
+                poll_ref = now.replace(hour=poll_hour, minute=poll_minute, second=0, microsecond=0) - timedelta(days=1)
+            else:
+                poll_ref = now.replace(hour=poll_hour, minute=poll_minute, second=0, microsecond=0)
+                if now < poll_ref:
+                    poll_ref -= timedelta(days=1)
+    
+            ref_poll_slot_id = f"{channel_id}__poll__{poll_ref.strftime('%Y-%m-%d_%H:%M')}"
+            due.append((slot_id, slot_time, channel_id, "report", ref_poll_slot_id))
 
     return due
 
@@ -112,13 +119,15 @@ def get_all_due_slots(now):
 def get_shift_for_report(report_time):
     report_time = report_time.astimezone(KYIV_TZ)
 
-    if report_time.hour == 9:
-        end_time = report_time.replace(hour=9, minute=0, second=0, microsecond=0)
-        start_time = end_time - timedelta(hours=12)
+    if report_time.hour < 12:
+        # Утренний отчёт — конец ночной смены (20:40 вчера → 08:40 сегодня)
+        end_time = report_time.replace(hour=8, minute=40, second=0, microsecond=0)
+        start_time = report_time.replace(hour=20, minute=40, second=0, microsecond=0) - timedelta(days=1)
         shift_name = "Ночная смена"
     else:
-        end_time = report_time.replace(hour=21, minute=0, second=0, microsecond=0)
-        start_time = end_time - timedelta(hours=12)
+        # Вечерний отчёт — конец дневной смены (08:40 → 20:40)
+        end_time = report_time.replace(hour=20, minute=40, second=0, microsecond=0)
+        start_time = report_time.replace(hour=8, minute=40, second=0, microsecond=0)
         shift_name = "Дневная смена"
 
     return start_time, end_time, shift_name
