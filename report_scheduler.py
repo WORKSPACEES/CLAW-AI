@@ -88,27 +88,29 @@ def get_all_due_slots(now):
         poll_hour = s.get("poll_hour", 20)
         poll_minute = s.get("poll_minute", 30)
 
-        # Вычисляем poll_slot_id для привязки к отчётам
+        # ── Poll-слот (опрос операторов) ──────────────────────────────────────
         poll_time = now.replace(hour=poll_hour, minute=poll_minute, second=0, microsecond=0)
         if now < poll_time:
             poll_time -= timedelta(days=1)
         poll_slot_id = f"{channel_id}__poll__{poll_time.strftime('%Y-%m-%d_%H:%M')}"
 
-        # Слоты отчёта (день и ночь)
+        # ✅ ДОБАВЛЯЕМ poll-слот в список!
+        due.append((poll_slot_id, poll_time, channel_id, "poll", poll_slot_id))
+
+        # ── Report-слоты (день и ночь) ────────────────────────────────────────
         for hour, minute in [(s["day_hour"], s["day_minute"]), (s["night_hour"], s["night_minute"])]:
             slot_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
             if now < slot_time:
                 slot_time -= timedelta(days=1)
             slot_id = f"{channel_id}__{slot_time.strftime('%Y-%m-%d_%H:%M')}"
 
-            # Ночной отчёт берёт poll за ПРЕДЫДУЩИЙ день
             if hour < 12:
                 poll_ref = now.replace(hour=poll_hour, minute=poll_minute, second=0, microsecond=0) - timedelta(days=1)
             else:
                 poll_ref = now.replace(hour=poll_hour, minute=poll_minute, second=0, microsecond=0)
                 if now < poll_ref:
                     poll_ref -= timedelta(days=1)
-    
+
             ref_poll_slot_id = f"{channel_id}__poll__{poll_ref.strftime('%Y-%m-%d_%H:%M')}"
             due.append((slot_id, slot_time, channel_id, "report", ref_poll_slot_id))
 
