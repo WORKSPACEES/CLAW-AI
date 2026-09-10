@@ -209,8 +209,8 @@ async def start_account(account):
 
     KYIV_TZ = ZoneInfo("Europe/Kyiv")
     now = datetime.now(KYIV_TZ)
-    day_start = now.replace(hour=9, minute=0, second=0, microsecond=0)
-    night_start = now.replace(hour=21, minute=0, second=0, microsecond=0)
+    day_start = now.replace(hour=8, minute=40, second=0, microsecond=0)
+    night_start = now.replace(hour=20, minute=40, second=0, microsecond=0)
 
     if day_start <= now < night_start:
         shift_start = day_start
