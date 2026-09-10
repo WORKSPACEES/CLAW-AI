@@ -101,6 +101,42 @@ async def save_message(
         print("❌ SUPABASE SAVE ERROR:", e, flush=True)
 
 
+async def watch_username(client, account):
+    """Раз в 5 минут спрашивает у Telegram ник и чинит базу, если он сменился.
+    Нужно потому, что аккаунт уже подключён и переподключаться не будет."""
+    session_name = account.get("session_name")
+
+    while True:
+        await asyncio.sleep(300)
+
+        try:
+            me = await client.get_me()
+            if not me:
+                continue
+
+            new_username = me.username or str(me.id)
+            old_username = account.get("username")
+
+            if new_username == old_username:
+                continue
+
+            supabase.table("telegram_accounts").update({
+                "username": new_username
+            }).eq("session_name", session_name).execute()
+
+            supabase.table("telegram_messages").update({
+                "account_username": new_username
+            }).eq("account_session_name", session_name).execute()
+
+            account["username"] = new_username
+
+            print(f"🔄 Юзер сменился: @{old_username} → @{new_username} "
+                  f"({session_name}) — обновил везде", flush=True)
+
+        except Exception as e:
+            print(f"❌ WATCH USERNAME ERROR [{session_name}]: {e}", flush=True)
+
+
 async def check_deleted_chats(client, account):
     while True:
         try:
@@ -276,6 +312,7 @@ async def start_account(account):
             print(f"❌ MESSAGE HANDLER ERROR [{username}]: {e}", flush=True)
 
     asyncio.create_task(check_deleted_chats(client, account))
+    asyncio.create_task(watch_username(client, account))
 
     return client
 
