@@ -268,7 +268,12 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
                 return value
         return default
 
-    account_username = first_value("account_username")
+    # Живое значение из telegram_accounts важнее копии в сообщениях —
+    # иначе после смены ника отчёт покажет старый.
+    account_username = (
+        account_data.get("username")
+        or first_value("account_username")
+    )
     ad_name = first_value("ad_name")
     operator_name = first_value("operator_name", "pc_name")
     phone = first_value("phone")
