@@ -51,7 +51,7 @@ def analyze_messages_with_groq(messages):
 
     try:
         response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="openai/gpt-oss-20b",
             messages=[
                 {
                     "role": "system",
@@ -283,7 +283,9 @@ def analyze_dialog_with_groq(dialog_messages):
                 },
             ],
             temperature=0.2,
-            max_tokens=700,
+            max_tokens=1200,
+            reasoning_effort="low",
+            reasoning_format="hidden",
         )
 
         raw = response.choices[0].message.content.strip()
