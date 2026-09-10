@@ -333,7 +333,9 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
     deleted_chats = sum(1 for lead in leads.values() if lead.get("deleted") is True)
     remaining = max(0, total_written - deleted_chats)
 
-    report_date = end_time.astimezone(KYIV_TZ).strftime("%d.%m")
+    # Дата смены — по её началу. У ночной конец приходится на следующий
+    # день, и отчёт за ночь 10-го подписывался 11-м.
+    report_date = start_time.astimezone(KYIV_TZ).strftime("%d.%m")
 
     report = []
     report.append(f"Дата: {report_date}")
@@ -341,7 +343,6 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
     report.append(f"Реклама: {ad_name}")
     report.append(f"ПК: {operator_name}")
     report.append(f"Юзер: @{account_username}")
-    report.append(f"Номер: {phone}")
     report.append("")
     report.append(f"Написало: {total_written}")
     report.append(f"Удалили чат: {deleted_chats}")
@@ -420,8 +421,8 @@ def get_current_shift_period(now=None):
     if now is None:
         now = datetime.now(KYIV_TZ)
 
-    day_start = now.replace(hour=9, minute=0, second=0, microsecond=0)
-    night_start = now.replace(hour=21, minute=0, second=0, microsecond=0)
+    day_start = now.replace(hour=8, minute=40, second=0, microsecond=0)
+    night_start = now.replace(hour=20, minute=40, second=0, microsecond=0)
 
     if day_start <= now < night_start:
         return {
