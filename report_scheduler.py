@@ -74,10 +74,10 @@ def get_all_due_slots(now):
         settings_list = [{
             "channel_id": REPORT_CHAT_ID,
             "channel_title": "default",
-            "day_hour": 8,
-            "day_minute": 40,
-            "night_hour": 20,
-            "night_minute": 40,
+            "day_hour": 9,
+            "day_minute": 0,
+            "night_hour": 21,
+            "night_minute": 0,
             "poll_hour": 20,
             "poll_minute": 30,
         }]
