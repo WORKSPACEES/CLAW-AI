@@ -63,7 +63,9 @@ def analyze_messages_with_groq(messages):
                 },
             ],
             temperature=0.3,
-            max_tokens=700,
+            max_tokens=1500,
+            reasoning_effort="low",
+            reasoning_format="hidden",
         )
 
         return response.choices[0].message.content
@@ -113,7 +115,9 @@ needs_manual_reply: true/false
                 },
             ],
             temperature=0.2,
-            max_tokens=400,
+            max_tokens=1000,
+            reasoning_effort="low",
+            reasoning_format="hidden",
         )
 
         raw = response.choices[0].message.content.strip()
@@ -167,7 +171,9 @@ def chat_with_groq(text):
                 },
             ],
             temperature=0.4,
-            max_tokens=500,
+            max_tokens=1200,
+            reasoning_effort="low",
+            reasoning_format="hidden",
         )
 
         return response.choices[0].message.content
