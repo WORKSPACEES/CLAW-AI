@@ -334,6 +334,29 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
                 leads[dialog_key]["name"] = dialog_name or leads[dialog_key].get("name")
                 leads[dialog_key]["deleted"] = bool(msg.get("chat_deleted"))
 
+    # ── Лид — только тот, кто впервые написал этому аккаунту в эту смену ──
+    first_seen = {}
+    ids = [str(l["dialog_id"]) for l in leads.values() if l.get("dialog_id")]
+    for i in range(0, len(ids), 200):
+        try:
+            res = (supabase.table("lead_registry").select("dialog_id, first_seen_at")
+                   .eq("account_session_name", account_session_name)
+                   .in_("dialog_id", ids[i:i + 200]).execute())
+            for row in res.data or []:
+                first_seen[str(row["dialog_id"])] = parse_dt(row["first_seen_at"])
+        except Exception as e:
+            print("⚠️ lead_registry read error:", e, flush=True)
+
+    repeat_count = 0
+    new_leads = {}
+    for key, lead in leads.items():
+        fs = first_seen.get(str(lead.get("dialog_id") or ""))
+        if fs is not None and fs < start_time:
+            repeat_count += 1
+            continue
+        new_leads[key] = lead
+    leads = new_leads
+
     total_written = len(leads)
     deleted_chats = sum(1 for lead in leads.values() if lead.get("deleted") is True)
     remaining = max(0, total_written - deleted_chats)
@@ -352,6 +375,7 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
     report.append(f"Написало: {total_written}")
     report.append(f"Удалили чат: {deleted_chats}")
     report.append(f"Осталось: {remaining}")
+    report.append(f"Повторные (не в счёт): {repeat_count}")
 
     if not detailed:
         return "\n".join(report)
