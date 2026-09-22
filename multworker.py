@@ -49,6 +49,59 @@ def load_accounts():
     return result.data or []
 
 
+def load_known_dialogs(session_name):
+    """Кого этот аккаунт уже знает — чтобы не дёргать Telegram повторно."""
+    known = set()
+    start = 0
+    while True:
+        try:
+            res = (supabase.table("lead_registry").select("dialog_id")
+                   .eq("account_session_name", session_name)
+                   .range(start, start + 999).execute())
+        except Exception as e:
+            print(f"⚠️ lead_registry load error: {e}", flush=True)
+            break
+        rows = res.data or []
+        known.update(str(r["dialog_id"]) for r in rows)
+        if len(rows) < 1000:
+            break
+        start += 1000
+    return known
+
+
+async def ensure_lead_registered(client, account, entity, fallback_date):
+    """Записывает дату ПЕРВОГО входящего сообщения собеседника этому аккаунту.
+    Дату берём из истории Telegram, а не из базы: база чистится каждые 3 дня."""
+    session_name = account.get("session_name")
+    dialog_id = str(getattr(entity, "id", entity))
+    known = account.setdefault("_known_dialogs", set())
+    if not session_name or dialog_id in known:
+        return
+
+    first_in = None
+    try:
+        async for m in client.iter_messages(entity, reverse=True, limit=300):
+            if not m.out:
+                first_in = m.date
+                break
+    except Exception as e:
+        print(f"⚠️ Не смог прочитать историю {dialog_id}: {e}", flush=True)
+
+    first_in = first_in or fallback_date
+    if not first_in:
+        return  # собеседник ещё ни разу не писал — лидом пока не считаем
+
+    try:
+        supabase.table("lead_registry").upsert({
+            "account_session_name": session_name,
+            "dialog_id": dialog_id,
+            "first_seen_at": first_in.isoformat(),
+        }, on_conflict="account_session_name,dialog_id", ignore_duplicates=True).execute()
+        known.add(dialog_id)
+    except Exception as e:
+        print(f"❌ LEAD REGISTRY ERROR [{dialog_id}]: {e}", flush=True)
+
+
 async def save_message(
     account,
     dialog_id,
@@ -222,6 +275,7 @@ async def start_account(account):
     shift_start_utc = shift_start.astimezone(timezone.utc)
 
     loaded = 0
+    account["_known_dialogs"] = load_known_dialogs(account.get("session_name"))
 
     async for dialog in client.iter_dialogs(limit=100):
         try:
@@ -240,6 +294,8 @@ async def start_account(account):
             first_name = getattr(entity, "first_name", "") or ""
             last_name = getattr(entity, "last_name", "") or ""
             dialog_name = f"{first_name} {last_name}".strip() or dialog_username
+
+            await ensure_lead_registered(client, account, entity, None)
 
             async for msg in client.iter_messages(entity, limit=50, offset_date=None):
                 if not msg.date:
@@ -297,6 +353,9 @@ async def start_account(account):
             dialog_name = title or f"{first_name} {last_name}".strip() or dialog_username
 
             direction = "outgoing" if event.out else "incoming"
+
+            if direction == "incoming":
+                await ensure_lead_registered(client, account, chat, event.message.date)
 
             await save_message(
                 account=account,
