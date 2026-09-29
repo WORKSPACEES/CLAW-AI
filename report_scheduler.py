@@ -53,6 +53,7 @@ def get_last_sent_slot_for(slot_id: str) -> bool:
         return bool(result.data)
     except Exception as e:
         print("⚠️ get_last_sent_slot_for ERROR:", e)
+        return True
     return False
 
 
@@ -269,6 +270,8 @@ async def main():
         due_slots = get_all_due_slots(now)
 
         for slot_id, slot_time, channel_id, slot_type, poll_slot_id in due_slots:
+            if now - slot_time > timedelta(minutes=15):
+                continue
             last_sent = get_last_sent_slot_for(slot_id)
             if not last_sent:
                 print("=" * 50)
