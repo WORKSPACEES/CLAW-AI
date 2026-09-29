@@ -508,6 +508,43 @@ async def report_to_channel_callback(callback: types.CallbackQuery):
             text=f"❌ Ошибка отчёта: {e}"
         )
 
+@dp.callback_query(lambda c: c.data.startswith("replace_pick:"))
+async def replace_pick_callback(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    old_session = callback.data.split(":", 1)[1]
+
+    from supabase_db import supabase as sb
+    res = await asyncio.to_thread(
+        lambda: sb.table("telegram_accounts").select("*").eq("session_name", old_session).limit(1).execute()
+    )
+    old = (res.data or [None])[0]
+
+    if not old:
+        await callback.answer("Аккаунт не найден", show_alert=True)
+        return
+
+    login_state[user_id] = {
+        "step": "waiting_phone",
+        "replace_session": old_session,
+        "report_channel_id": None,
+        "report_channel_title": None,
+        "ad_name": old.get("ad_name"),
+        "pc_name": old.get("pc_name"),
+        "phone": None,
+    }
+
+    await callback.answer()
+    await bot.send_message(
+        chat_id=user_id,
+        text=(
+            f"♻️ Замена @{old.get('username') or '-'} (ПК {old.get('pc_name') or '-'})\n\n"
+            "Пришли номер НОВОГО Telegram в формате +380... или войди по QR.\n"
+            "Пока новый не подключится, старый остаётся как есть."
+        ),
+        reply_markup=login_code_keyboard()
+    )
+
+
 @dp.callback_query(lambda c: c.data == "login_by_qr")
 async def login_by_qr_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -530,6 +567,7 @@ async def login_by_qr_callback(callback: types.CallbackQuery):
         ad_name=state.get("ad_name"),
         pc_name=state.get("pc_name"),
         operator_name=state.get("pc_name"),
+        replace_session=state.get("replace_session"),
     )
 
     if not result.get("ok"):
@@ -989,6 +1027,7 @@ async def admin_chat(message: types.Message):
                     ad_name=state.get("ad_name"),
                     pc_name=state.get("pc_name"),
                     operator_name=state.get("pc_name"),
+                    replace_session=state.get("replace_session"),
                 )
 
                 if not result.get("ok"):
@@ -1130,6 +1169,30 @@ async def admin_chat(message: types.Message):
             "❌ Неизвестный шаг подключения. Я сбросил вход.\n\n"
             "Напиши заново: подключить тг"
         )
+        return
+
+    # 3.5 Замена Telegram
+    if "заменить тг" in lower_text or "замени тг" in lower_text or "замена тг" in lower_text:
+        from supabase_db import supabase as sb
+        res = await asyncio.to_thread(
+            lambda: sb.table("telegram_accounts")
+            .select("session_name, username, pc_name, status")
+            .eq("owner_user_id", str(user_id))
+            .in_("status", ["active", "unauthorized"])
+            .execute()
+        )
+        accounts = res.data or []
+
+        if not accounts:
+            await message.answer("Нет аккаунтов для замены.")
+            return
+
+        buttons = [[InlineKeyboardButton(
+            text=f"{'❌' if a.get('status') == 'unauthorized' else '✅'} @{a.get('username') or '-'} ({a.get('pc_name') or '-'})",
+            callback_data=f"replace_pick:{a['session_name']}"
+        )] for a in accounts]
+
+        await message.answer("Какой Telegram заменить?", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
         return
 
     # 4. Подключение Telegram
@@ -1305,6 +1368,12 @@ async def admin_chat(message: types.Message):
         return
 
     if intent == "send_report_to_channel":
+        channels = await asyncio.to_thread(get_bot_channels, "default")
+        if not channels:
+            await message.answer("❌ Нет подключённых каналов.")
+            return
+        await message.answer("В какой канал отправить отчёт?", reply_markup=build_report_channel_keyboard(channels))
+        return
         if not REPORT_CHAT_ID:
             await message.answer("❌ REPORT_CHAT_ID не указан в .env")
             return
