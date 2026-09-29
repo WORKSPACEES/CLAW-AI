@@ -1,7 +1,6 @@
 from collections import defaultdict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from ai import analyze_dialog_with_groq
 
 from supabase_db import supabase
 
@@ -110,6 +109,28 @@ def is_deleted_dialog(dialog_messages):
             return True
 
     return False
+
+
+def build_dialog_context(dialog_messages, edge=2, middle=2, max_len=150):
+    msgs = [m for m in dialog_messages if m.get("text")]
+    if len(msgs) <= edge * 2 + middle:
+        picked = msgs
+    else:
+        mid = len(msgs) // 2
+        start = mid - middle // 2
+        picked = msgs[:edge] + [None] + msgs[start:start + middle] + [None] + msgs[-edge:]
+
+    lines = []
+    for m in picked:
+        if m is None:
+            lines.append("   …")
+            continue
+        who = "👤" if m.get("direction") == "incoming" else "💬"
+        text = (m.get("text") or "").replace("\n", " ")
+        if len(text) > max_len:
+            text = text[:max_len] + "…"
+        lines.append(f"   {who} {text}")
+    return "\n".join(lines) or "   -"
 
 
 def analyze_dialog(username, dialog_messages):
@@ -222,15 +243,13 @@ def analyze_dialog(username, dialog_messages):
         result = "В работе"
         manager_action = "Проверить вручную"
 
-    ai_result = analyze_dialog_with_groq(dialog_messages)
-
     return {
         "username": username,
         "deleted": deleted,
-        "diagnosis": ai_result.get("diagnosis", "Неизвестно"),
-        "detail": ai_result.get("detail", "Нет данных"),
-        "result": ai_result.get("result", "Неизвестно"),
-        "manager_action": ai_result.get("manager_action", "Проверить вручную"),
+        "diagnosis": diagnosis,
+        "detail": detail,
+        "result": result,
+        "manager_action": manager_action,
     }
 
 
@@ -389,8 +408,6 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
     # ── Параллельный Groq-анализ всех диалогов одновременно ──────────────────
 
     def analyze_one_sync(i, dialog_key, lead):
-        import time
-        time.sleep(i * 3)  # каждый следующий диалог ждёт чуть дольше
         username = lead.get("username")
         dialog_id = lead.get("dialog_id")
         name = lead.get("name") or "-"
@@ -422,10 +439,10 @@ def build_account_report_text(account_session_name, messages, start_time, end_ti
         lines.append(f"{i}. {user_line}")
         lines.append(f"Имя: {name}")
         lines.append(f"Удалил чат: {'Да' if lead.get('deleted') else 'Нет'}")
-        lines.append(f"Последнее сообщение: {lead.get('last_text') or '-'}")
-        lines.append(f"Детали: {ai_result.get('detail')}")
-        lines.append(f"Анализ: {ai_result.get('result')}")
-        lines.append(f"Вероятность: {ai_result.get('diagnosis')}")
+        lines.append(f"Статус: {ai_result.get('diagnosis')} → {ai_result.get('manager_action')}")
+        lines.append(f"Сообщений: {len(dialog_messages)}")
+        lines.append("Переписка:")
+        lines.append(build_dialog_context(dialog_messages))
         lines.append("")
         return (i, "\n".join(lines))
 
