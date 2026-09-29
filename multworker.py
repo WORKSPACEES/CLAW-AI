@@ -1,6 +1,7 @@
 import os
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from supabase_db import cleanup_old_messages
 
@@ -138,7 +139,7 @@ async def save_message(
             else datetime.now(timezone.utc).isoformat()
         ),
 
-        "local_time": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+        "local_time": datetime.now(ZoneInfo("Europe/Kyiv")).strftime("%d.%m.%Y %H:%M:%S"),
     }
 
     try:
@@ -241,6 +242,10 @@ async def start_account(account):
     if not await client.is_user_authorized():
         print(f"❌ Аккаунт {username} не авторизован", flush=True)
         await client.disconnect()
+        try:
+            supabase.table("telegram_accounts").update({"status": "unauthorized"}).eq("session_name", account.get("session_name")).execute()
+        except Exception as e:
+            print(f"⚠️ Не смог пометить {username} как unauthorized: {e}", flush=True)
         return None
 
     print(f"✅ Аккаунт авторизован: {username}", flush=True)
@@ -270,7 +275,7 @@ async def start_account(account):
     elif now >= night_start:
         shift_start = night_start
     else:
-        shift_start = day_start.replace(day=day_start.day - 1) if day_start.day > 1 else day_start
+        shift_start = night_start - timedelta(days=1)
 
     shift_start_utc = shift_start.astimezone(timezone.utc)
 
@@ -396,6 +401,16 @@ async def watch_accounts():
     while True:
         try:
             accounts = load_accounts()
+
+            active_names = {a.get("session_name") for a in accounts}
+            for sn in list(running_clients):
+                if sn not in active_names:
+                    try:
+                        await running_clients[sn].disconnect()
+                    except Exception:
+                        pass
+                    running_clients.pop(sn, None)
+                    print(f"🔌 Отключил аккаунт, которого нет в active: {sn}", flush=True)
 
             if not accounts:
                 print("❌ В Supabase нет active аккаунтов с session_string", flush=True)
