@@ -110,7 +110,8 @@ async def save_message(
     dialog_name,
     direction,
     text,
-    message_date
+    message_date,
+    msg_id=None
 ):
     if not text:
         return
@@ -140,10 +141,13 @@ async def save_message(
         ),
 
         "local_time": datetime.now(ZoneInfo("Europe/Kyiv")).strftime("%d.%m.%Y %H:%M:%S"),
+        "tg_msg_id": msg_id,
     }
 
     try:
-        supabase.table("telegram_messages").insert(data).execute()
+        supabase.table("telegram_messages").upsert(
+            data, on_conflict="account_session_name,dialog_id,tg_msg_id", ignore_duplicates=True
+        ).execute()
 
         print(
             f"✅ [{account.get('username')}] "
@@ -324,6 +328,7 @@ async def start_account(account):
                     direction=direction,
                     text=msg.raw_text,
                     message_date=msg.date,
+                    msg_id=msg.id,
                 )
                 loaded += 1
 
@@ -370,6 +375,7 @@ async def start_account(account):
                 direction=direction,
                 text=event.raw_text,
                 message_date=event.message.date,
+                msg_id=event.message.id,
             )
 
         except Exception as e:
