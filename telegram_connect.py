@@ -41,7 +41,7 @@ def make_session_name_from_me(owner_user_id, me):
     return f"telegram_{owner_user_id}_{me.id}"
 
 
-async def start_qr_login(owner_user_id, ad_name=None, pc_name=None, operator_name=None):
+async def start_qr_login(owner_user_id, ad_name=None, pc_name=None, operator_name=None, replace_session=None):
     if owner_user_id in login_clients:
         old_client = login_clients[owner_user_id].get("client")
 
@@ -72,6 +72,7 @@ async def start_qr_login(owner_user_id, ad_name=None, pc_name=None, operator_nam
             "ad_name": ad_name,
             "pc_name": pc_name,
             "operator_name": operator_name,
+            "replace_session": replace_session,
         }
 
         print("✅ TELEGRAM QR LOGIN CREATED", flush=True)
@@ -121,42 +122,7 @@ async def wait_qr_login(owner_user_id, timeout=90):
     try:
         await qr_login.wait(timeout=timeout)
 
-        me = await client.get_me()
-        session_string = client.session.save()
-
-        phone = getattr(me, "phone", None)
-
-        if phone:
-            phone = str(phone)
-            if not phone.startswith("+"):
-                phone = "+" + phone
-
-        session_name = make_session_name_from_me(owner_user_id, me)
-
-        supabase.table("telegram_accounts").upsert({
-            "owner_user_id": str(owner_user_id),
-            "owner_id": str(os.getenv("REPORT_CHAT_ID", "default_owner")),
-            "session_name": session_name,
-            "session_string": session_string,
-            "phone": phone,
-            "username": me.username,
-            "first_name": me.first_name,
-            "ad_name": data.get("ad_name"),
-            "pc_name": data.get("pc_name"),
-            "operator_name": data.get("operator_name"),
-            "status": "active",
-            "active": True,
-        }, on_conflict="session_name").execute()
-
-        await client.disconnect()
-
-        if owner_user_id in login_clients:
-            del login_clients[owner_user_id]
-
-        return {
-            "ok": True,
-            "message": f"✅ Telegram подключен: {me.first_name} / @{me.username}"
-        }
+        return await save_authorized_account(owner_user_id, client, data)
 
     except SessionPasswordNeededError:
         token = secrets.token_urlsafe(32)
@@ -205,7 +171,7 @@ async def wait_qr_login(owner_user_id, timeout=90):
         }
 
 
-async def start_login(owner_user_id, phone, ad_name=None, pc_name=None, operator_name=None):
+async def start_login(owner_user_id, phone, ad_name=None, pc_name=None, operator_name=None, replace_session=None):
     phone = str(phone).strip().replace(" ", "")
 
     if not phone.startswith("+"):
@@ -250,6 +216,7 @@ async def start_login(owner_user_id, phone, ad_name=None, pc_name=None, operator
             "ad_name": ad_name,
             "pc_name": pc_name,
             "operator_name": operator_name,
+            "replace_session": replace_session,
         }
 
         if "App" in code_type:
@@ -290,6 +257,22 @@ async def start_login(owner_user_id, phone, ad_name=None, pc_name=None, operator
         }
 
 
+def apply_replacement(old_session, new_session):
+    if not old_session or old_session == new_session:
+        return ""
+    try:
+        supabase.table("telegram_accounts").update({
+            "status": "replaced", "active": False, "session_string": None,
+        }).eq("session_name", old_session).execute()
+        supabase.table("report_channels").update({"session_name": new_session}).eq("session_name", old_session).execute()
+        supabase.table("telegram_messages").delete().eq("account_session_name", old_session).execute()
+        supabase.table("lead_registry").delete().eq("account_session_name", old_session).execute()
+        return "\n\n♻️ Старый аккаунт заменён и отключён."
+    except Exception as e:
+        print("❌ APPLY REPLACEMENT ERROR:", repr(e), flush=True)
+        return f"\n\n⚠️ Новый подключён, но замена старого прошла не полностью: {e}"
+
+
 async def save_authorized_account(owner_user_id, client, data):
     me = await client.get_me()
     session_string = client.session.save()
@@ -326,12 +309,14 @@ async def save_authorized_account(owner_user_id, client, data):
 
     await client.disconnect()
 
+    replace_msg = apply_replacement(data.get("replace_session"), session_name)
+
     if owner_user_id in login_clients:
         del login_clients[owner_user_id]
 
     return {
         "ok": True,
-        "message": f"✅ Telegram подключен: {me.first_name} / @{me.username}"
+        "message": f"✅ Telegram подключен: {me.first_name} / @{me.username}" + replace_msg
     }
 
 
